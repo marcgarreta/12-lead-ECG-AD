@@ -23,35 +23,4 @@ Preprocessing routines are stored under preprocessing/:
 	•	PTB-XL: Signal normalization, heartbeat segmentation, and noise filtering.
 	•	MIMIC-IV ECG: Raw signal extraction, resampling, and artifact removal.
 
-Requirements
-	•	Python 3.8 or higher
-	•	PyTorch 1.10 or higher
-	•	numpy, pandas, scipy, matplotlib
-
-Installation and Usage
-	1.	Clone this repository:
-
-git clone <repository-url>
-cd <repository-directory>
-
-
-	2.	Install dependencies:
-
-pip install -r requirements.txt
-
-
-	3.	Run data preprocessing:
-
-python preprocessing/ptbxl_preprocessing.py
-python preprocessing/mimic_preprocessing.py
-
-
-	4.	Train and evaluate a model (example for the Convolutional Autoencoder):
-
-python src/conv_autoencoder.py --train
-
-
-
-⸻
-
 Developed as part of the Undergraduate Thesis (TFG) on ECG Anomaly Detection.
