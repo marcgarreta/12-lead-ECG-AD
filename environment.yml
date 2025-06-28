@@ -1,0 +1,23 @@
+name: ecg-anomaly-detection
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  # Conda-managed packages (binary optimized)
+  - python=3.11
+  - pytorch=2.3
+  - cudatoolkit=12.4
+  - numpy=1.26
+  - scipy
+  - scikit-learn
+  - pandas
+  - matplotlib
+  - pip                # include pip itself
+
+  # Anything not on Conda goes in the pip subsection
+  - pip:
+      - torchmetrics==1.4.0
+      - lightning==2.3.1
+      - wandb==0.17.1
+      - ecg-detect-utils @ git+https://github.com/yourlab/ecg-detect-utils@main
