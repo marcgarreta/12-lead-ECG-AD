@@ -1,0 +1,92 @@
+from __future__ import annotations
+import argparse
+from pathlib import Path
+
+import numpy as np
+import wfdb
+from scipy.signal import butter, iirnotch, filtfilt
+
+
+def butter_bandpass(signal: np.ndarray, lowcut: float, highcut: float, fs: int, order: int = 3) -> np.ndarray:
+    nyq = 0.5 * fs
+    b, a = butter(order, [lowcut / nyq, highcut / nyq], btype="band")
+    return filtfilt(b, a, signal)
+
+def iir_notch(signal: np.ndarray, freq: float, q: float, fs: int) -> np.ndarray:
+    nyq = 0.5 * fs
+    b, a = iirnotch(freq / nyq, q)
+    return filtfilt(b, a, signal)
+
+def zscore(signal: np.ndarray) -> np.ndarray:
+    return (signal - np.mean(signal)) / np.std(signal)
+
+def process_leads(p_signal: np.ndarray, fs: int, notch_freq: float) -> np.ndarray:
+    """Filter & normalise each lead separately and return float64 array."""
+    processed = np.empty_like(p_signal, dtype=np.float64)
+    for i in range(p_signal.shape[1]):
+        lead = p_signal[:, i]
+        lead = butter_bandpass(lead, 0.5, 40, fs)
+        lead = iir_notch(lead, notch_freq, q=30, fs=fs)
+        lead = zscore(lead)
+        processed[:, i] = lead
+    return processed
+
+def rescale_to_int16(p_signal: np.ndarray) -> tuple[np.ndarray, list[float]]:
+    """Return int16 signal and per‑lead adc_gain list keeping physical units."""
+    int_sig = np.zeros_like(p_signal, dtype=np.int16)
+    gains: list[float] = []
+    for i in range(p_signal.shape[1]):
+        lead = p_signal[:, i]
+        max_abs = np.max(np.abs(lead))
+        scale = 32767.0 / max_abs if max_abs > 0 else 1.0
+        int_sig[:, i] = (lead * scale).astype(np.int16)
+        # physical = int / gain → gain = 1/scale
+        gains.append(1.0 / scale)
+    return int_sig, gains
+
+def process_record(hea_path: Path, notch_freq: float) -> None:
+    rec = wfdb.rdrecord(str(hea_path.with_suffix("")))
+    fs = int(rec.fs)
+
+    # 1‑3. Filter + normalise
+    processed = process_leads(rec.p_signal.astype(np.float64), fs, notch_freq)
+
+    # 4. Convert to int16 + new gains
+    int_sig, gains = rescale_to_int16(processed)
+
+    # 5. Write back (.dat + .hea) overwriting original
+    wfdb.wrsamp(
+        record_name=rec.record_name,
+        fs=fs,
+        units=rec.units,
+        sig_name=rec.sig_name,
+        d_signal=int_sig,
+        fmt=["16"] * int_sig.shape[1],
+        adc_gain=gains,
+        baseline=[0] * int_sig.shape[1],
+        write_dir=str(hea_path.parent),
+        comments=rec.comments + [
+            "Filtered: 0.5‑40 Hz 3rd‑order Butterworth band‑pass",
+            f"Notch: {notch_freq} Hz Q=30",
+            "Per‑lead z‑score normalised",
+        ],
+    )
+
+def walk_records(input_dir: Path, recursive: bool, notch_freq: float) -> None:
+    pattern = "**/*.hea" if recursive else "*.hea"
+    for hea_path in input_dir.glob(pattern):
+        print(f"→ Processing {hea_path.relative_to(input_dir)}")
+        process_record(hea_path, notch_freq)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="In‑place preprocessing for MIMIC‑IV ECG WFDB records")
+    ap.add_argument("--input_dir", type=Path, default="/fhome/mgarreta/MIMICIV_PREPROCESSED", help="Folder containing .hea/.dat files")
+    ap.add_argument("--recursive", action="store_true", help="Recurse into sub‑directories")
+    ap.add_argument("--notch_freq", type=float, default=60.0, help="Mains frequency for notch filter (Hz)")
+    args = ap.parse_args()
+
+    walk_records(args.input_dir, args.recursive, args.notch_freq)
+
+if __name__ == "__main__":
+    main()
