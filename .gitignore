@@ -1,4 +1,4 @@
-# .gitignore (root)
+# MIMIC IV ECG dataset
 data/**
 !data/raw/.gitkeep
 !data/processed/.gitkeep
