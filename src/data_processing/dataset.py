@@ -1,64 +1,65 @@
-import os
+from __future__ import annotations
+import argparse
+from pathlib import Path
+import shutil
+
 import pandas as pd
 import wfdb
-import shutil
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
-# This script now ONLY copies .dat and .hea files for normal ECGs into `output_dir`.
-input_csv = "/fhome/mgarreta/mimiciv_/mimic-iv-ecg-diagnostic-electrocardiogram-matched-subset-1.0/machine_measurements.csv"
-mimiciv_root = "/fhome/mgarreta/mimiciv_/mimic-iv-ecg-diagnostic-electrocardiogram-matched-subset-1.0/files"
-output_dir = "/fhome/mgarreta/MIMICIV_PREPROCESSED"
-os.makedirs(output_dir, exist_ok=True)
+def select_normal_ecgs(input_csv: Path, mimic_root: Path, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-df = pd.read_csv(input_csv)
-normal_df = df[(df["report_0"] == "Sinus rhythm") & (df["report_2"] == "Normal ECG")]
-print(f"✅ Found {len(normal_df)} normal ECGs with sinus rhythm and normal report.")
+    df = pd.read_csv(input_csv)
+    normal_df = df[(df["report_0"] == "Sinus rhythm") & (df["report_2"] == "Normal ECG")]
+    print(f"✅ Found {len(normal_df)} normal ECGs.")
 
-study_ids = []
+    study_ids = []
 
-for _, row in tqdm(normal_df.iterrows(), total=len(normal_df), desc="Processing ECGs"):
-    study_id = str(row["study_id"])
-    subject_id = str(row["subject_id"])
+    for _, row in tqdm(normal_df.iterrows(), total=len(normal_df), desc="Copying records"):
+        study_id   = str(row["study_id"])
+        subject_id = str(row["subject_id"])
 
-    # Construct path: /files/pXXXX/pXXXXXXXX/sYYYYYYYY/YYYYYYYY
-    record_base = os.path.join(
-        mimiciv_root,
-        f"p{subject_id[:4]}",
-        f"p{subject_id}",
-        f"s{study_id}",
-        study_id
-    )
-    hea_file = record_base + ".hea"
-    dat_file = record_base + ".dat"
+        record_base = mimic_root / f"p{subject_id[:4]}" / f"p{subject_id}" / f"s{study_id}" / study_id
+        hea_file, dat_file = record_base.with_suffix(".hea"), record_base.with_suffix(".dat")
 
-    if not (os.path.exists(hea_file) and os.path.exists(dat_file)):
-        print(f"⚠️ Skipping {study_id}: Missing .hea/.dat")
-        continue
-
-    try:
-        # no preprocessing, just verify the record loads and has 12 leads
-        signal, _ = wfdb.rdsamp(record_base)
-        if signal.shape[1] != 12:
-            print(f"⚠️ Skipping {study_id}: not 12 leads")
+        if not (hea_file.exists() and dat_file.exists()):
+            print(f"⚠️  Missing .hea/.dat for {study_id}")
             continue
 
-        study_ids.append(study_id)
+        try:
+            sig, _ = wfdb.rdsamp(str(record_base))
+            if sig.shape[1] != 12:
+                print(f"⚠️  {study_id} is not 12-lead")
+                continue
 
-        # Copy .dat into the shared folder
-        shutil.copy(dat_file, os.path.join(output_dir, f"{study_id}.dat"))
+            study_ids.append(study_id)
 
-        # Modify and copy .hea file
-        with open(hea_file, "r") as f:
-            lines = f.readlines()
-        if not any("Labels" in line for line in lines):
-            lines.append("# Labels: NORM\n")
-        with open(os.path.join(output_dir, f"{study_id}.hea"), "w") as f:
-            f.writelines(lines)
+            # copy files
+            shutil.copy2(dat_file, output_dir / f"{study_id}.dat")
+            lines = Path(hea_file).read_text().splitlines()
+            if not any("Labels" in l for l in lines):
+                lines.append("# Labels: NORM")
+            (output_dir / f"{study_id}.hea").write_text("\n".join(lines))
 
-    except Exception as e:
-        print(f"⚠️ Skipping {study_id}: {str(e)}")
+        except Exception as e:
+            print(f"⚠️  Skipping {study_id}: {e}")
 
-# ==== SAVE OUTPUT ====
-pd.DataFrame(study_ids, columns=["study_id"]).to_csv(os.path.join(output_dir, "ids.csv"), index=False)
+    # save manifest
+    pd.DataFrame({"study_id": study_ids}).to_csv(output_dir / "ids.csv", index=False)
+    print(f"💾 Copied {len(study_ids)} normal ECGs to {output_dir}")
 
-print(f"\n💾 Copied {len(study_ids)} normal ECGs (.dat & .hea)")
+if __name__ == "__main__":
+    repo_root = Path(__file__).resolve().parents[3]        # ecg/data/ -> ecg -> src -> REPO
+    default_out = repo_root / "data" / "processed" / "mimic" / "interim"
+
+    ap = argparse.ArgumentParser(description="Copy only normal-ECG MIMIC studies")
+    ap.add_argument("--input_csv",  type=Path, required=True,
+                    help="machine_measurements.csv from PhysioNet download")
+    ap.add_argument("--mimic_root", type=Path, required=True,
+                    help="Root folder containing the PhysioNet 'files/' tree")
+    ap.add_argument("--out_dir",    type=Path, default=default_out,
+                    help=f"Destination (default: {default_out})")
+    args = ap.parse_args()
+
+    select_normal_ecgs(args.input_csv, args.mimic_root, args.out_dir)
