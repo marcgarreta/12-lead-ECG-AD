@@ -10,7 +10,7 @@ SCRIPT_DIR   = Path(__file__).resolve().parent       # .../src
 PROJECT_ROOT = SCRIPT_DIR.parent                     # project root
 DATA_PROC    = PROJECT_ROOT / 'data' / 'processed'
 PTBXL_DIR    = DATA_PROC / 'ptbxl'
-MIMIC_DIR    = DATA_PROC / 'mimic' / 'npy'
+MIMIC_DIR    = DATA_PROC / 'mimic'
 
 # Parameters
 sample_length = 5000
