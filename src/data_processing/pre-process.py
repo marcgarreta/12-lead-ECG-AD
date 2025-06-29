@@ -73,6 +73,7 @@ def process_ptbxl(input_dir: Path, csv_path: Path, output_dir: Path):
     df = df[df['diagnostic_superclass'].apply(lambda lst: 'NORM' in lst)]
     # df = df[df['sampling_rate'] == 500]
     print(f"Filtered to {len(df)} normal PTB-XL records (500Hz subset via records500/).")
+    print(f"Saving PTB-XL numpy files to: {output_dir}")
 
     for idx, row in tqdm(df.iterrows(), total=len(df), desc='PTB-XL'):
         rec_name = str(row['filename_hr'])
