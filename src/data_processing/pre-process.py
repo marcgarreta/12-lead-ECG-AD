@@ -7,6 +7,12 @@ import wfdb
 from scipy.signal import butter, iirnotch, filtfilt
 from tqdm.auto import tqdm
 import ast
+import sys
+SCRIPT_DIR = Path(__file__).resolve().parent
+# Assuming script is in src/data_processing/, project root is two levels up
+PROJECT_ROOT = SCRIPT_DIR.parents[2]
+DEFAULT_RAW = PROJECT_ROOT / 'data' / 'raw'
+DEFAULT_PROCESSED = PROJECT_ROOT / 'data' / 'processed'
 
 def find_nan_files(data_dir: Path, pattern: str = "*.npy") -> list[Path]:
     nan_files = []
@@ -123,13 +129,20 @@ def main():
     p = argparse.ArgumentParser(description='Preprocess ECG datasets modularly')
     p.add_argument('--dataset', choices=['ptbxl', 'mimic'], required=True,
                    help='Which dataset to process: ptbxl or mimic')
-    p.add_argument('--input-dir', type=Path, default=Path('/Users/marcgarreta/Desktop/12-lead-ECG-AD/data/raw'),
-                   help='Base raw data directory (contains ptbxl/ and mimic subset)')
-    p.add_argument('--output-dir', type=Path, default=Path('/Users/marcgarreta/Desktop/12-lead-ECG-AD/data/processed'),
-                   help='Base output directory')
+    p.add_argument('--input-dir', type=Path, default=DEFAULT_RAW,
+                   help=f'Base raw data directory (default: {DEFAULT_RAW})')
+    p.add_argument('--output-dir', type=Path, default=DEFAULT_PROCESSED,
+                   help=f'Base output directory (default: {DEFAULT_PROCESSED})')
     p.add_argument('--clean-nans', action='store_true',
                    help='Remove any .npy files containing NaNs after processing')
     args = p.parse_args()
+
+    args.input_dir = args.input_dir.expanduser().resolve()
+    args.output_dir = args.output_dir.expanduser().resolve()
+
+    if not args.input_dir.exists():
+        print(f"❌ Input directory not found: {args.input_dir}", file=sys.stderr)
+        sys.exit(1)
 
     if args.dataset == 'ptbxl':
         print('Starting PTB-XL preprocessing...')
