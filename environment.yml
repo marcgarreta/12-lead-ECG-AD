@@ -2,22 +2,24 @@ name: ecg-anomaly-detection
 channels:
   - conda-forge
   - pytorch
-  - nvidia
+  - defaults
 dependencies:
-  # Conda-managed packages (binary optimized)
-  - python=3.11
-  - pytorch=2.3
-  - cudatoolkit=12.4
-  - numpy=1.26
+  - python=3.10
+  - numpy
+  - pandas
   - scipy
   - scikit-learn
-  - pandas
+  - pytorch
+  - torchvision  # if you need image utilities; can omit if unused
+  - cudatoolkit=11.7  # or your local CUDA version; omit if CPU-only
   - matplotlib
-  - pip                # include pip itself
-
-  # Anything not on Conda goes in the pip subsection
+  - seaborn
+  - tqdm
+  - wfdb
+  - scikit-image  # for any additional signal/image needs
+  - pip
   - pip:
-      - torchmetrics==1.4.0
-      - lightning==2.3.1
-      - wandb==0.17.1
-      - ecg-detect-utils @ git+https://github.com/yourlab/ecg-detect-utils@main
+      - dash
+      - plotly
+      - windows-curses  # if using dash in Windows terminal
+      - wfdb      # also available via pip on some platforms
