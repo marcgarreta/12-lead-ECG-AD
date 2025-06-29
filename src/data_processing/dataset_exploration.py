@@ -1,6 +1,6 @@
 from pathlib import Path
 from torch.utils.data import DataLoader
-from dataset_both import ECGDataset
+from dataset import ECGDataset
 from window_dataset import WindowDataset
 import numpy as np
 import pandas as pd
