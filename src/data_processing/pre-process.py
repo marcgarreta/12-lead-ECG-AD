@@ -9,8 +9,8 @@ from tqdm.auto import tqdm
 import ast
 import sys
 SCRIPT_DIR = Path(__file__).resolve().parent
-# Assuming script is in src/data_processing/, project root is two levels up
-PROJECT_ROOT = SCRIPT_DIR.parents[2]
+# Assuming script is in src/data_processing/, project root is one level up
+PROJECT_ROOT = SCRIPT_DIR.parents[1]
 DEFAULT_RAW = PROJECT_ROOT / 'data' / 'raw'
 DEFAULT_PROCESSED = PROJECT_ROOT / 'data' / 'processed'
 
