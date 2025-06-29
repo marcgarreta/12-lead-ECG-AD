@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+# Adaptation of CAE-M Model (TKDE 21)
 class CAE_M(nn.Module):
     def __init__(self, in_channels=12):
         super(CAE_M, self).__init__()
