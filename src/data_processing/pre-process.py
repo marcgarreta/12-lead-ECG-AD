@@ -156,10 +156,10 @@ def main():
         print('Selecting + Processing MIMIC normal ECGs directly to .npy...')
         process_mimic_direct(
             input_dir=args.input_dir,
-            output_dir=args.output_dir / 'mimic' / 'npy'
+            output_dir=args.output_dir / 'mimic' 
         )
         if args.clean_nans:
-            npy_dir = args.output_dir / 'mimic' / 'npy'
+            npy_dir = args.output_dir / 'mimic' 
             print(f"Scanning {npy_dir} for NaNs...")
             nan_files = find_nan_files(npy_dir)
             if nan_files:
