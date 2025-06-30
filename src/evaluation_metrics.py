@@ -235,3 +235,4 @@ if __name__=='__main__':
             args.ckpt = str(ROOT / 'src' / 'MA_VAE' / 'checkpoints' / 'best_ma_vae_full.pt')
 
     main(args)
+
