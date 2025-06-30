@@ -5,6 +5,7 @@ import dash
 from dash import dcc, html, Input, Output, State
 import plotly.graph_objs as go
 import torch
+import torch.nn.functional as F
 from plotly.subplots import make_subplots
 import plotly.graph_objs as go
 import base64, io
@@ -16,27 +17,34 @@ from scipy.signal import find_peaks
 # ensure project root on path so `src` can be imported
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+SRC_DIR = ROOT / 'src'
 
 from src.models.vae_bilstm_attention import VAE
 from src.visualization_vae import reconstruct_full_mean_std, ALPHA, ATTN_STRIDE, ATTN_WINDOW
-# Parse command-line args for checkpoint
-parser = argparse.ArgumentParser()
-parser.add_argument('--ckpt', required=True, help='Path to model checkpoint')
-args, unknown = parser.parse_known_args()
-CKPT_PATH = Path(args.ckpt).resolve()
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# Load model at startup
-ckpt_data = torch.load(str(CKPT_PATH), map_location=DEVICE)
-model = VAE(n_leads=12, n_latent=64).to(DEVICE)
-if isinstance(ckpt_data, dict):
-    model.load_state_dict(ckpt_data)
+# Load model checkpoints from weights directory
+VAE_CKPT_PATH = SRC_DIR / 'weights' / 'best_vae_attn_model.pt'
+CAE_CKPT_PATH = SRC_DIR / 'weights' / 'best_cae_model.pth'
+
+# Load VAE-BiLSTM-MHA model
+vae_ckpt_data = torch.load(str(VAE_CKPT_PATH), map_location=DEVICE)
+vae_model = VAE(n_leads=12, n_latent=64).to(DEVICE)
+if isinstance(vae_ckpt_data, dict):
+    vae_model.load_state_dict(vae_ckpt_data)
 else:
     try:
-        model.load_state_dict(ckpt_data.state_dict())
+        vae_model.load_state_dict(vae_ckpt_data.state_dict())
     except:
-        model.load_state_dict(ckpt_data)
-model.eval()
+        vae_model.load_state_dict(vae_ckpt_data)
+vae_model.eval()
+
+# Load CAE model
+from src.models.cae import CAE
+cae_ckpt_data = torch.load(str(CAE_CKPT_PATH), map_location=DEVICE)
+cae_model = CAE().to(DEVICE)
+cae_model.load_state_dict(cae_ckpt_data)
+cae_model.eval()
 
 # Project root is two levels up from this file
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,7 +105,7 @@ app.layout = html.Div(style={'display': 'flex', 'height': '100vh'}, children=[
         dcc.RadioItems(
             id='model-select',
             options=[
-                {'label': 'VAE Model', 'value': 'vae'},
+                {'label': 'VAE-BiLSTM-MHA', 'value': 'vae'},
                 {'label': 'CAE Model', 'value': 'cae'},
             ],
             value='vae',
@@ -119,7 +127,8 @@ def display_filename(fname):
 
 def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
                     attn_full, mse_full, anomaly_full, filename,
-                    lead_idxs=None, threshold=0.5, threshold_mask=None):
+                    lead_idxs=None, threshold=0.5, threshold_mask=None,
+                    model_select='vae'):
     T, n_leads = x_orig_full.shape
     if not lead_idxs:
         lead_idxs = list(range(n_leads))
@@ -127,18 +136,25 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
     total_rows = n_leads * 4
     row_heights = []
     for _ in range(n_leads):
-        # signal and anomaly equal height, then narrower attention and MSE
-        row_heights += [0.4, 0.4, 0.1, 0.1]
+        # signal and anomaly get more height, then narrower attention and MSE
+        row_heights += [0.5, 0.5, 0.1, 0.1]
     fig = make_subplots(
         rows=total_rows, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.009,
+        vertical_spacing=0.02,
         row_heights=row_heights,
         subplot_titles=sum([
             [f"Lead {lead_idxs[i]+1:02d}", "", "", ""]
             for i in range(n_leads)
         ], [])
     )
+    # Determine heatmap style based on model
+    if model_select == 'vae':
+        attn_color = 'Viridis'
+        attn_title = 'Attn'
+    else:
+        attn_color = 'Hot'
+        attn_title = 'Saliency'
     for idx, lead in enumerate(lead_idxs):
         row_sig  = 4*idx + 1
         row_anom = 4*idx + 2
@@ -175,17 +191,18 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
         # attention heatmap
         fig.add_trace(go.Heatmap(
             z=attn_full[:,idx][None,:], x=t,
-            colorscale='Viridis',
+            colorscale=attn_color,
             showscale=(idx==0),
             colorbar=dict(
                 len=0.2,
                 y=0.85 - idx*0.25,
-                title="Attn",
+                title=attn_title,
                 thickness=30,
                 thicknessmode='pixels',
                 x=1.02,
                 xanchor='left',
-                showticklabels=False
+                showticklabels=False,
+                outlinecolor='black'
             )
         ), row=row_attn, col=1)
         # MSE heatmap
@@ -216,10 +233,9 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
                              line=dict(color='orange', width=2),
                              name='Anomaly Score',
                              showlegend=True), row=1, col=1)
-    # Hide y-axis for all but signal rows
+    # Hide y-axis for all but signal and anomaly rows (keep anomaly row visible)
     for idx in range(n_leads):
-        row_sig = 4*idx + 1
-        for row in [4*idx+2, 4*idx+3, 4*idx+4]:
+        for row in [4*idx+3, 4*idx+4]:
             fig.update_yaxes(showticklabels=False, row=row, col=1)
     fig.update_layout(
         height=200*n_leads,
@@ -229,7 +245,7 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
             orientation='h',
             x=0.5,
             xanchor='center',
-            y=1.10,
+            y=1.15,
             yanchor='bottom'
         ),
         margin=dict(t=80, b=20, l=50, r=200)
@@ -242,9 +258,10 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
     Input('threshold-slider', 'value'),
     State('upload-data', 'contents'),
     State('upload-data', 'filename'),
-    State('lead-select', 'value')
+    State('lead-select', 'value'),
+    State('model-select', 'value')
 )
-def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx):
+def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select):
     if n_clicks == 0 or contents is None:
         return html.Div()
     content_type, content_string = contents.split(',')
@@ -254,32 +271,57 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx):
         sig = sig.T
     sig = torch.tensor(sig, dtype=torch.float32)
 
-    # reconstruct
-    recon_m, recon_s = reconstruct_full_mean_std(model, sig)
-    # compute strips
-    # attention, mse, anomaly per-lead
-    from numpy import log, percentile
-    # attention per-lead (reuse compute_strips logic inline)
-    T = sig.shape[1]; n_leads=12
-    attn_full = np.zeros((T,n_leads))
-    for lead in range(n_leads):
-        sig1 = torch.zeros_like(sig); sig1[lead]=sig[lead]
-        wins=[]
-        for start in range(0, T-ATTN_WINDOW+1, ATTN_STRIDE):
-            wins.append(sig1[:,start:start+ATTN_WINDOW].T)
-        win = torch.stack(wins).to(DEVICE)
-        with torch.no_grad():
-            *_, att = model.forward(win)
-        a = att.mean(dim=(1,2,3) if att.ndim==4 else (1,2)).cpu().numpy()
-        tmp=np.zeros(T); cnt=np.zeros(T)
-        for i_w, s in enumerate(range(0, T-ATTN_WINDOW+1, ATTN_STRIDE)):
-            tmp[s:s+ATTN_WINDOW]+=a[i_w]; cnt[s:s+ATTN_WINDOW]+=1
-        cnt[cnt==0]=1; attn_full[:,lead]=tmp/cnt
+    # Determine which model is selected
+    current_model = vae_model if model_select == 'vae' else cae_model
 
-    # mse & anomaly
-    x_orig = sig.numpy().T; x_mean=recon_m.T.numpy(); x_std=recon_s.T.numpy()
-    mse_full = (x_orig-x_mean)**2
-    anomaly_full = ALPHA*mse_full + (1-ALPHA)*log(x_std**2+1e-6)
+    # Reconstruction
+    if model_select == 'vae':
+        recon_m, recon_s = reconstruct_full_mean_std(vae_model, sig)
+    else:
+        with torch.no_grad():
+            recon_out = cae_model(sig.unsqueeze(0).to(DEVICE))
+        recon_m = recon_out.squeeze(0).cpu()
+        recon_s = torch.zeros_like(recon_m)
+    # compute strips: attention or saliency, mse, anomaly per-lead
+    from numpy import log, percentile
+    T = sig.shape[1]; n_leads = sig.shape[0]
+
+    if model_select == 'vae':
+        # VAE attention
+        attn_full = np.zeros((T, n_leads))
+        for lead in range(n_leads):
+            sig1 = torch.zeros_like(sig); sig1[lead] = sig[lead]
+            wins = []
+            for start in range(0, T-ATTN_WINDOW+1, ATTN_STRIDE):
+                wins.append(sig1[:, start:start+ATTN_WINDOW].T)
+            win = torch.stack(wins).to(DEVICE)
+            with torch.no_grad():
+                *_, att = vae_model.forward(win)
+            a = att.mean(dim=(1,2,3) if att.ndim==4 else (1,2)).cpu().numpy()
+            tmp = np.zeros(T); cnt = np.zeros(T)
+            for i_w, s in enumerate(range(0, T-ATTN_WINDOW+1, ATTN_STRIDE)):
+                tmp[s:s+ATTN_WINDOW] += a[i_w]; cnt[s:s+ATTN_WINDOW] += 1
+            cnt[cnt==0] = 1
+            attn_full[:, lead] = tmp / cnt
+    else:
+        # CAE saliency mapping
+        sig_in = sig.unsqueeze(0).clone().detach().requires_grad_(True).to(DEVICE)
+        recon_pred = cae_model(sig_in)
+        loss = F.mse_loss(recon_pred, sig_in, reduction='none')
+        loss_sum = loss.sum(dim=1)  # [1, length]
+        loss_sum.sum().backward()
+        saliency = sig_in.grad.abs().squeeze(0).cpu().numpy()  # [channels, length]
+        # normalize per channel to [0,1]
+        saliency = (saliency - saliency.min(axis=1, keepdims=True)) / (
+            saliency.max(axis=1, keepdims=True) - saliency.min(axis=1, keepdims=True) + 1e-6
+        )
+        # transpose to [T, channels]
+        attn_full = saliency.T
+
+    # MSE & anomaly
+    x_orig = sig.numpy().T; x_mean = recon_m.T.numpy(); x_std = recon_s.T.numpy()
+    mse_full = (x_orig - x_mean) ** 2
+    anomaly_full = ALPHA * mse_full + (1 - ALPHA) * log(x_std**2 + 1e-6)
 
     threshold_mask = (anomaly_full > threshold)
 
@@ -308,7 +350,8 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx):
     fig = make_ecg_figure(x_orig, x_mean, x_std,
                           attn_full, mse_full, anomaly_full, filename,
                           lead_idxs=lead_idx,
-                          threshold=threshold, threshold_mask=threshold_mask)
+                          threshold=threshold, threshold_mask=threshold_mask,
+                          model_select=model_select)
     # annotate title with BPM
     fig.update_layout(
         title_text=f"ECG {filename} — 12-Lead Anomaly (BPM={bpm_mean:.1f})"
@@ -335,3 +378,4 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx):
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=9000)
+
