@@ -34,7 +34,7 @@ VAE-BiLSTM-MHA: A variational autoencoder with both lead-wise and temporal multi
 ---
 
 ## Results
-![Results](img/results/evaluation_metrics.png)
+![Results](img/results/resul1)
 
 ---
 
