@@ -1,29 +1,38 @@
 import argparse
 from pathlib import Path
+
 import numpy as np
+
 import dash
 from dash import dcc, html, Input, Output, State
-import plotly.graph_objs as go
+
 import torch
 import torch.nn.functional as F
+
 from plotly.subplots import make_subplots
 import plotly.graph_objs as go
+
 import base64, io
-from pathlib import Path
+
 import sys
-from pathlib import Path
-# --- Added for BPM calculation ---
+
 from scipy.signal import find_peaks
-# ensure project root on path so `src` can be imported
+
+# To access the src path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 SRC_DIR = ROOT / 'src'
+MODELS_DIR = SRC_DIR / 'models'
+DATA_DIR = ROOT / 'data'
+IMG_DIR  = ROOT / 'img'
 
-from src.models.vae_bilstm_attention import VAE
+# To access the models and the visualization tools 
+from src.models.vae_bilstm_attention import VAE #VAE-BiLSTM-MHA
 from src.visualization_vae import reconstruct_full_mean_std, ALPHA, ATTN_STRIDE, ATTN_WINDOW
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# Load model checkpoints from weights directory
+
+# Model weights (already trained models) 
 VAE_CKPT_PATH = SRC_DIR / 'weights' / 'best_vae_attn_model.pt'
 CAE_CKPT_PATH = SRC_DIR / 'weights' / 'best_cae_model.pth'
 
@@ -46,20 +55,11 @@ cae_model = CAE().to(DEVICE)
 cae_model.load_state_dict(cae_ckpt_data)
 cae_model.eval()
 
-# Project root is two levels up from this file
-ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = ROOT / 'src'
-MODELS_DIR = SRC_DIR / 'models'
-DATA_DIR = ROOT / 'data'
-IMG_DIR  = ROOT / 'img'
-
-
-# Dash app
+# UI Application
 app = dash.Dash(__name__)
 server = app.server
 
 app.layout = html.Div(style={'display': 'flex', 'height': '100vh'}, children=[
-    # Sidebar
     html.Div(style={
             'width': '20%', 'padding': '20px', 'backgroundColor': '#f0f0f0'
         }, children=[
@@ -75,7 +75,6 @@ app.layout = html.Div(style={'display': 'flex', 'height': '100vh'}, children=[
         ),
         html.Div(id='file-info', style={'marginTop': '10px'}),
         html.Br(),
-        # Removed Model Checkpoint Path input block as per instructions
         html.Br(), html.Br(),
         html.Button(
             'Analyze ECG Sample',
@@ -88,8 +87,8 @@ app.layout = html.Div(style={'display': 'flex', 'height': '100vh'}, children=[
         dcc.Dropdown(
             id='lead-select',
             options=[{'label': f'Lead {i+1:02d}', 'value': i} for i in range(12)],
-            value=[],               # changed from None
-            multi=True,             # added to allow multiple selections
+            value=[],               
+            multi=True,             
             clearable=True,
             placeholder="Select one or more leads"
         ),
@@ -112,7 +111,6 @@ app.layout = html.Div(style={'display': 'flex', 'height': '100vh'}, children=[
             labelStyle={'display': 'block', 'marginBottom': '5px'}
         ),
     ]),
-    # Main content
     html.Div(id='graph-container', style={'flex': '1', 'padding': '20px', 'overflowY': 'auto'})
 ])
 
@@ -135,8 +133,9 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
     t = list(range(T))
     total_rows = n_leads * 4
     row_heights = []
+                        
+    # Loop to have more height in Original vs Reconstructed and Anomaly score graphics
     for _ in range(n_leads):
-        # signal and anomaly get more height, then narrower attention and MSE
         row_heights += [0.5, 0.5, 0.1, 0.1]
     fig = make_subplots(
         rows=total_rows, cols=1,
@@ -148,39 +147,39 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
             for i in range(n_leads)
         ], [])
     )
-    # Determine heatmap style based on model
+    
     if model_select == 'vae':
         attn_color = 'Viridis'
         attn_title = 'Attn'
     else:
         attn_color = 'Hot'
         attn_title = 'Saliency'
+        
     for idx, lead in enumerate(lead_idxs):
         row_sig  = 4*idx + 1
         row_anom = 4*idx + 2
         row_attn = 4*idx + 3
         row_mse  = 4*idx + 4
-        # original & reconstruction in the first row
+        # Original vs Reconstructe signal
         fig.add_trace(go.Scatter(
             x=t, y=x_orig_full[:,idx],
-            # name=f"Orig L{lead+1:02d}",
             line=dict(color='black'),
             showlegend=False
         ), row=row_sig, col=1)
         fig.add_trace(go.Scatter(
             x=t, y=x_mean_full[:,idx],
-            # name=f"Recon L{lead+1:02d}",
             line=dict(dash='dash', color='red'),
             showlegend=False
         ), row=row_sig, col=1)
-        # anomaly score line just below the signal
+        
+        # Anomaly score graphic
         fig.add_trace(go.Scatter(
             x=t, y=anomaly_full[:,idx],
-            # name=f"Anomaly L{lead+1:02d}",
             line=dict(color='orange'),
             showlegend=False
         ), row=row_anom, col=1)
-        # red overlay on segments where anomaly > threshold
+
+        # Red points on segments where anomaly is higher than the threshold
         y_overlay = [val if val > threshold else None for val in anomaly_full[:,idx]]
         fig.add_trace(go.Scatter(
             x=t, y=y_overlay,
@@ -188,7 +187,8 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
             line=dict(color='red', width=4),
             showlegend=False
         ), row=row_anom, col=1)
-        # attention heatmap
+        
+        # Attention heatmap per lead
         fig.add_trace(go.Heatmap(
             z=attn_full[:,idx][None,:], x=t,
             colorscale=attn_color,
@@ -205,7 +205,8 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
                 outlinecolor='black'
             )
         ), row=row_attn, col=1)
-        # MSE heatmap
+        
+        # MSE colormap per lead
         fig.add_trace(go.Heatmap(
             z=mse_full[:,idx][None,:], x=t,
             colorscale='Blues',
@@ -220,7 +221,8 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
                 xanchor='left'
             )
         ), row=row_mse, col=1)
-    # add legend entries after all lead loops
+
+    # Legends (Attention Score, Original, Reconstructed)
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
                              line=dict(color='black', width=2),
                              name='Original',
@@ -233,7 +235,6 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
                              line=dict(color='orange', width=2),
                              name='Anomaly Score',
                              showlegend=True), row=1, col=1)
-    # Hide y-axis for all but signal and anomaly rows (keep anomaly row visible)
     for idx in range(n_leads):
         for row in [4*idx+3, 4*idx+4]:
             fig.update_yaxes(showticklabels=False, row=row, col=1)
@@ -261,6 +262,7 @@ def make_ecg_figure(x_orig_full, x_mean_full, x_std_full,
     State('lead-select', 'value'),
     State('model-select', 'value')
 )
+
 def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select):
     if n_clicks == 0 or contents is None:
         return html.Div()
@@ -271,10 +273,10 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
         sig = sig.T
     sig = torch.tensor(sig, dtype=torch.float32)
 
-    # Determine which model is selected
+    # Choose either CAE or VAE-BiLSTM-MHA
     current_model = vae_model if model_select == 'vae' else cae_model
 
-    # Reconstruction
+    # Reconstruction step
     if model_select == 'vae':
         recon_m, recon_s = reconstruct_full_mean_std(vae_model, sig)
     else:
@@ -282,12 +284,12 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
             recon_out = cae_model(sig.unsqueeze(0).to(DEVICE))
         recon_m = recon_out.squeeze(0).cpu()
         recon_s = torch.zeros_like(recon_m)
-    # compute strips: attention or saliency, mse, anomaly per-lead
+        
     from numpy import log, percentile
     T = sig.shape[1]; n_leads = sig.shape[0]
 
     if model_select == 'vae':
-        # VAE attention
+        # VAE-BiLSTM-MHA attention
         attn_full = np.zeros((T, n_leads))
         for lead in range(n_leads):
             sig1 = torch.zeros_like(sig); sig1[lead] = sig[lead]
@@ -315,7 +317,7 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
         saliency = (saliency - saliency.min(axis=1, keepdims=True)) / (
             saliency.max(axis=1, keepdims=True) - saliency.min(axis=1, keepdims=True) + 1e-6
         )
-        # transpose to [T, channels]
+        # transposing to [T, channels]
         attn_full = saliency.T
 
     # MSE & anomaly
@@ -325,8 +327,7 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
 
     threshold_mask = (anomaly_full > threshold)
 
-    # --- Compute BPM from lead II (index 1) ---
-    # compute BPM using lead II (index 1)
+    # Get BPM from lead II
     ecg_ch = sig[1].cpu().numpy()
     peaks, _ = find_peaks(ecg_ch, distance=0.4 * 500)  # 0.4s min distance at 500Hz
     if len(peaks) >= 2:
@@ -338,7 +339,6 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
         bpm_mean = float('nan')
 
     if lead_idx:
-        # Subset arrays to only the selected leads
         x_orig = x_orig[:, lead_idx]
         x_mean = x_mean[:, lead_idx]
         x_std = x_std[:, lead_idx]
@@ -352,27 +352,23 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
                           lead_idxs=lead_idx,
                           threshold=threshold, threshold_mask=threshold_mask,
                           model_select=model_select)
-    # annotate title with BPM
     fig.update_layout(
         title_text=f"ECG {filename} — 12-Lead Anomaly (BPM={bpm_mean:.1f})"
     )
 
-    # determine overall anomaly status
     is_anom = bool(np.any(threshold_mask))
-    # display a single-sentence status
     if is_anom:
         status_div = html.P("This ECG shows anomalies.", style={'color': 'red', 'textAlign': 'center', 'fontWeight': 'bold'})
     else:
         status_div = html.P("This ECG appears normal.", style={'color': 'green', 'textAlign': 'center', 'fontWeight': 'bold'})
 
-    # Disable line simplification for all scatter traces for full fidelity
     for trace in fig.data:
         if trace.type in ('scatter', 'scattergl'):
             trace.update(line_simplify=False)
 
     graph = dcc.Graph(
         figure=fig,
-        style={'height': f'{90}vh'}  # use viewport height to give plenty of vertical space
+        style={'height': f'{90}vh'} 
     )
     return [status_div, graph]
 
