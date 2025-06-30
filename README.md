@@ -1,6 +1,6 @@
 # 12-Lead ECG Anomaly Detection
 
-Unsupervised detection and localisation of anomalies in 12-lead electrocardiograms (ECGs) using attention-augmented variational autoencoders, plus an interactive Dash dashboard for visual triage.
+Unsupervised detection and localisation of anomalies in 12-lead electrocardiograms (ECGs) using three autoencoder-based methods (Convolutional Autoencoder, Variational Autoencoder, Variational Autoencoder with Multi Head a Attention) plus an interactive Dash dashboard for interpretability.
 
 ---
 
