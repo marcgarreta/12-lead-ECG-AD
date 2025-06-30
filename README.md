@@ -14,6 +14,15 @@ This code accompanies my **Final Degree Project in Artificial Intelligence** (Un
 
 ---
 
+## Models
+
+(Hablar de models 
+(que hace cada modelo (sintetico))
+(decir que VAE BILSTM MHA es novel)
+(
+
+---
+
 ## Dashboard
 ![User Interface Example](img/dashboard/DASHBOARD.png)
 
