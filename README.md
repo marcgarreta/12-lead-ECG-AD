@@ -79,3 +79,7 @@ python visualization_vae.py #if you want to plot the vae visualizations
 # ui (to run the local web application
 src ui
 python app.py 
+´´´
+---
+
+##REFERENCES
