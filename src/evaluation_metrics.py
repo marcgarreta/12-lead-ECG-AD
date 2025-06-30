@@ -3,26 +3,41 @@ import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import f1_score, recall_score, roc_auc_score
+from sklearn.metrics import f1_score, recall_score, roc_auc_score, confusion_matrix, average_precision_score
 from tqdm.auto import tqdm
 import pandas as pd
 import glob as glob
 import os as os
 
+import torch.serialization
 
-from model_bilstm import VAE
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+# Ensure MA_VAE package is on path
+import sys
+# Ensure MA_VAE package is on path
+sys.path.insert(0, str(ROOT / 'src'))
+CPSC_CSV_DEFAULT = ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_reference_balanced.csv'
+CPSC_DIR_DEFAULT = ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_cpsc'
+
+WEIGHTS_DIR = ROOT / 'src' / 'weights'
+VAE_CKPT_DEFAULT = WEIGHTS_DIR / 'best_vae_attn_model.pt'
+CAE_CKPT_DEFAULT = WEIGHTS_DIR / 'best_cae_model.pth'
+
+from models.vae_bilstm_attention import VAE
+from models.cae import CAE
+from MA_VAE.MA_VAE import MA_VAE, VAEEncoder, VAEDecoder, GaussianNoise, MA
 
 WINDOW = 500
 STRIDE = 250
-ALPHA  = 0.7
-BETA   = 0.3
+ALPHA  = 0.4
+BETA   = 0.6
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+# Slide windows over a (12, 5000) signal
 def slide_windows(sig):
-    # Ensure tensor
     if not isinstance(sig, torch.Tensor):
         sig = torch.tensor(sig, dtype=torch.float32)
-    # Ensure shape [12, T]
     if sig.ndim != 2:
         raise ValueError(f"Expected 2D signal, got {sig.ndim}D")
     if sig.shape[0] == 12:
@@ -51,44 +66,90 @@ def slide_windows(sig):
     return torch.stack(wins)  # [n_windows, WINDOW, 12]
 
 def ecg_score(model, sig):
+    if isinstance(model, CAE):
+        # CAE: MSE over full padded/truncated signal
+        sig_t = sig.clone().detach()
+        L = sig_t.shape[1]
+        if L < 5000:
+            sig_t = F.pad(sig_t, (0, 5000 - L))
+        else:
+            sig_t = sig_t[:, :5000]
+        with torch.no_grad():
+            recon = model(sig_t.unsqueeze(0).to(DEVICE)).squeeze(0).cpu()
+        return float(((sig_t - recon)**2).mean())
+    # VAE or MA_VAE path
     win = slide_windows(sig).to(DEVICE)
-    x_mean, x_logvar, mu, logvar, attn, _ = model.forward(win)
+    out = model.forward(win)
+    # Unpack based on output length (VAE returns 6, MA_VAE returns 7)
+    if len(out) == 6:
+        x_mean, x_logvar, mu, logvar, attn, _ = out
+    else:
+        # MA_VAE: skip reconstruction at position 2, then z_mean, z_logvar, attn_weights, focus
+        x_mean, x_logvar, _, mu, logvar, attn, _ = out
     sigma2 = torch.exp(x_logvar)
     err = (win - x_mean)**2 / (sigma2 + 1e-6)
+    att_w = attn.mean(dim=tuple(range(1, attn.ndim))).detach()
     kl = -0.5*(1 + logvar - mu.pow(2) - logvar.exp()).sum(dim=[1,2])
-    var_term = x_logvar
-    base = ALPHA*err.sum([1,2]) + (1-ALPHA)*var_term.sum([1,2]) + BETA*kl
+    rec_err = err.sum([1,2]) * att_w
+    var_term = x_logvar.sum([1,2])
+    base = ALPHA * rec_err + (1-ALPHA) * var_term + BETA * kl
     return float(base.mean())
 
 def find_best_threshold(y_true, y_scores):
-    best, thr = -1, 0
-    for t in np.percentile(y_scores, np.linspace(0,100,100)):
+    # Sweep 1000 thresholds between min and max score
+    candidates = np.linspace(y_scores.min(), y_scores.max(), 1000)
+    best_f1 = -1.0
+    best_thr = candidates[0]
+    for t in candidates:
         yhat = (y_scores > t).astype(int)
         f1 = f1_score(y_true, yhat)
-        if f1>best:
-            best, thr = f1, t
-    return thr, best
+        if f1 > best_f1:
+            best_f1 = f1
+            best_thr = t
+    return best_thr, best_f1
 
 def main(args):
-
-    ckpt = torch.load(args.ckpt, map_location=DEVICE, weights_only=True)
-    if isinstance(ckpt, dict):
+    if args.model_type == 'ma_vae':
+        # Resolve checkpoint path and fallback if necessary
+        ckpt_path = Path(args.ckpt)
+        if not ckpt_path.exists():
+            # Try replacing '/export/fhome' with '/fhome'
+            alt_path = Path(str(ckpt_path).replace('/export/fhome', '/fhome'))
+            if alt_path.exists():
+                ckpt_path = alt_path
+            else:
+                raise FileNotFoundError(f"Checkpoint not found at {args.ckpt} or {alt_path}")
+        args.ckpt = str(ckpt_path)
+        # Allow pickling of MA_VAE classes
+        torch.serialization.add_safe_globals([MA_VAE, VAEEncoder, VAEDecoder, GaussianNoise, MA])
+        # Load full model checkpoint (allow pickled MA_VAE object)
+        ckpt = torch.load(args.ckpt, map_location=DEVICE, weights_only=False)
+        # Initialize MA-VAE with window length, number of leads, and latent dimension
+        model = MA_VAE(seq_len=WINDOW, n_leads=12, latent_dim=64).to(DEVICE)
+        if isinstance(ckpt, dict):
+            model.load_state_dict(ckpt)
+        else:
+            model = ckpt.to(DEVICE)
+        model.eval()
+    elif args.model_type == 'vae':
+        vae_ckpt = torch.load(args.ckpt, map_location=DEVICE)
         model = VAE(n_leads=12, n_latent=64).to(DEVICE)
-        model.load_state_dict(ckpt)
+        if isinstance(vae_ckpt, dict):
+            model.load_state_dict(vae_ckpt)
+        else:
+            model = vae_ckpt.to(DEVICE)
+        model.eval()
     else:
-        model = ckpt.to(DEVICE)
-    model.eval()
-
-    df = pd.read_csv(args.ptbxl_csv)
-    id_col = next(c for c in ['Recording','ID','id','recording'] if c in df.columns)
-    df['path'] = df[id_col].astype(str).apply(lambda r: os.path.join(args.ptbxl_data, f"{r}.npy"))
-    df = df[df.path.map(os.path.exists)].reset_index(drop=True)
-
-    # Subsample PTB-XL if requested
-    ptbxl_df = df
-    if args.ptbxl_max_samples:
-        ptbxl_df = ptbxl_df.sample(n=min(args.ptbxl_max_samples, len(ptbxl_df)),
-                                   random_state=42).reset_index(drop=True)
+        cae_ckpt = torch.load(args.ckpt, map_location=DEVICE)
+        model = CAE().to(DEVICE)
+        if isinstance(cae_ckpt, dict):
+            model.load_state_dict(cae_ckpt)
+        else:
+            try:
+                model.load_state_dict(cae_ckpt.state_dict())
+            except:
+                model.load_state_dict(cae_ckpt)
+        model.eval()
 
     # ——— Include CPSC dataset samples ———
     if args.cpsc_csv and args.cpsc_dir:
@@ -101,87 +162,76 @@ def main(args):
         # Ensure label column is int
         cpsc_df['label'] = cpsc_df['label'].astype(int)
         # Rename Recording to match id_col
+        id_col = 'Recording'
         cpsc_df = cpsc_df.rename(columns={'Recording': id_col})
 
-        # Subsample CPSC if requested
-        if args.cpsc_max_samples:
+        # Optionally subsample CPSC for faster runs
+        if args.cpsc_max_samples is not None:
             cpsc_df = cpsc_df.sample(n=min(args.cpsc_max_samples, len(cpsc_df)),
                                      random_state=42).reset_index(drop=True)
 
-    if args.mimic_dir:
-        import glob as glob, os as os
-        mimic_files = glob.glob(os.path.join(args.mimic_dir, '*.npy'))
-        df_mimic = pd.DataFrame({
-            id_col: [os.path.basename(f).replace('.npy','') for f in mimic_files],
-            'path':  mimic_files,
-            'label': 1
-        })
+    df = cpsc_df
 
-        # Subsample MIMIC if requested
-        if args.mimic_max_samples is not None:
-            df_mimic = df_mimic.sample(n=min(args.mimic_max_samples, len(df_mimic)),
-                                       random_state=42).reset_index(drop=True)
-
-    frames = [ptbxl_df]
-    if args.mimic_dir:
-        frames.append(df_mimic)
-
-    if args.cpsc_csv and args.cpsc_dir:
-        frames.append(cpsc_df)
-    df = pd.concat(frames, ignore_index=True)
-
-    ys, scores = [], []
+    ys, scores_vae = [], []
     for _, row in tqdm(df.iterrows(), total=len(df), desc='Scoring'):
         sig = torch.tensor(np.load(row.path).T, dtype=torch.float32)
-        # Ensure signal length is 5000 samples
         L = sig.shape[1]
         if L < 5000:
             sig = F.pad(sig, (0, 5000 - L))
         elif L > 5000:
             sig = sig[:, :5000]
-        ys.append(int(row.get('label', row.label)))  # if original CSV had `label`
-        scores.append(ecg_score(model, sig))
+        ys.append(int(row.get('label', row.label))) 
+        scores_vae.append(ecg_score(model, sig))
 
-    ys     = np.array(ys)
-    scores = np.array(scores)
+    ys = np.array(ys)
+    scores_vae = np.array(scores_vae)
+    # Min–max normalize VAE scores to range [0,1]
+    sv = scores_vae
+    scores_norm = (sv - sv.min()) / (sv.max() - sv.min() + 1e-8)
+    scores_vae = scores_norm
 
-    if len(np.unique(ys))<2:
+    if len(np.unique(ys)) < 2:
         print("Solo una clase presente; no puedo calcular F1/Recall/AUC.")
     else:
-        thr, best_f1 = find_best_threshold(ys,scores)
-        recall = recall_score(ys, scores>thr)
-        auc    = roc_auc_score(ys, scores)
-        print(f"Threshold: {thr:.3f} (best F1={best_f1:.3f})")
-        print(f"F1={best_f1:.3f}  Recall={recall:.3f}  AUC={auc:.3f}")
+        thr, best_f1 = find_best_threshold(ys, scores_vae)
+        pred = (scores_vae > thr).astype(int)
+        tn, fp, fn, tp = confusion_matrix(ys, pred).ravel()
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        auc = roc_auc_score(ys, scores_vae)
+        pr_auc = average_precision_score(ys, scores_vae)
+        print(f"Threshold: {thr:.6f} (best F1={best_f1:.3f})")
+        print(f"Precision={precision:.3f}  Recall={recall:.3f}  AUC={auc:.3f}  PR AUC={pr_auc:.3f}")
+        print("Confusion Matrix:")
+        print(np.array([[tn, fp],
+                        [fn, tp]]))
 
 if __name__=='__main__':
     p = argparse.ArgumentParser()
 
-    # MODEL PARAMETERS
-    p.add_argument('--ckpt',        required=True,
-                   help='Path to model checkpoint')
+    p.add_argument('--ckpt', type=str, default=None, required=False,
+                   help='Path to model checkpoint (defaults to src/weights based on model_type)')
+    p.add_argument('--model_type', choices=['vae','cae','ma_vae'], default='vae',
+                   help='Model type: vae for VAE-BiLSTM-MHA, cae for convolutional autoencoder, ma_vae for the MA-VAE model')
 
-    # MAX SAMPLES 
-    p.add_argument('--ptbxl_max_samples', type=int, required=True,
-                   help='Máximo de muestras a usar de PTB-XL (antes de mezclar)')
-    p.add_argument('--cpsc_max_samples',  type=int, required=True,
-                   help='Máximo de muestras a usar de CPSC (antes de mezclar)')
-    p.add_argument('--mimic_max_samples', type=int, required=True,
-                   help='Máximo de muestras a usar de MIMIC (antes de mezclar)')
-
-    # CPSC dataset paths
-    p.add_argument('--cpsc_csv', type=str, required=True,
+    p.add_argument('--cpsc_csv', type=str,
+                   default=str(CPSC_CSV_DEFAULT),
                    help='Path to processed_reference.csv for CPSC evaluation')
-    p.add_argument('--cpsc_dir', type=str, required=True,
+    p.add_argument('--cpsc_dir', type=str,
+                   default=str(CPSC_DIR_DEFAULT),
                    help='Directory containing processed_cpsc .npy files')
-    # PTB-XL dataset paths
-    p.add_argument('--ptbxl_data',  required=True)
-    p.add_argument('--ptbxl_csv',   required=True,
-                   help='CSV file for PTB-XL dataset')
-    # MIMIC dataset paths
-    p.add_argument('--mimic_dir', type=str, required=True,
-                   help='Directory containing MIMIC abnormal .npy files (all label=1)')
+    p.add_argument('--cpsc_max_samples', type=int, default=None,
+                   help='Maximum number of CPSC samples to evaluate (for quick tests)')
 
     args = p.parse_args()
-    main(args)
 
+    if args.ckpt is None:
+        weights_dir = ROOT / 'src' / 'weights'
+        if args.model_type == 'vae':
+            args.ckpt = str(weights_dir / 'best_vae_attn_model.pt')
+        elif args.model_type == 'cae':
+            args.ckpt = str(weights_dir / 'best_cae_model.pth')
+        else:  # ma_vae
+            args.ckpt = str(ROOT / 'src' / 'MA_VAE' / 'checkpoints' / 'best_ma_vae_full.pt')
+
+    main(args)
