@@ -16,14 +16,15 @@ This code accompanies my **Final Degree Project in Artificial Intelligence** (Un
 
 ## Models
 
+CAE: A lightweight convolutional autoencoder that flags anomalies purely via reconstruction error on raw ECG waveforms
 ![Convolutional Autoencoder](img/model_architecture/CAE_arch.png)
-A lightweight convolutional autoencoder that flags anomalies purely via reconstruction error on raw ECG waveforms
 
+VAE-BiLSTM: A bidirectional LSTM VAE that captures global ECG deviations without any attention mechanisms.
 ![Variational Autoencoder with Bidirectional Long Short-Term Memory](img/model_architecture/VAE_arc-2.png)
 A bidirectional LSTM VAE that captures global ECG deviations without any attention mechanisms.
 
+VAE-BiLSTM-MHA: A variational autoencoder with both lead-wise and temporal multi-head attention for pinpointing when and where anomalies occur (Novel approach) 
 ![Variational Autoencoder with Bidirectional Long Short-Term Memory with Multi-Head Attention](img/model_architecture/MAVAE.png)
-A variational autoencoder with both lead-wise and temporal multi-head attention for pinpointing when and where anomalies occur (Novel approach) 
 
 ---
 
