@@ -14,34 +14,8 @@ def cyclical_annealing_beta(epoch: int,
                             cycle_period: int = 10,
                             ramp_ratio: float = 0.5,
                             max_beta: float = 1.0) -> float:
-    """
-    Compute the cyclical annealing coefficient β for the KL term of a VAE.
-
-    A cycle consists of two phases:
-    1. Linear ramp‑up phase that spans `cycle_period * ramp_ratio` epochs,
-       where β increases from 0 to `max_beta`.
-    2. Hold phase for the remainder of the cycle where β stays at `max_beta`.
-
-    Parameters
-    ----------
-    epoch : int
-        Current (1‑indexed) epoch.
-    cycle_period : int
-        Number of epochs in one full cycle.
-    ramp_ratio : float
-        Fraction of the cycle used for the linear ramp‑up (0 < ramp_ratio ≤ 1).
-    max_beta : float
-        Maximum value reached by β at the end of the ramp‑up.
-
-    Returns
-    -------
-    float
-        β value for the provided epoch.
-    """
-    # Epoch position inside its cycle (0‑indexed)
     cycle_epoch = (epoch - 1) % cycle_period
-    ramp_epochs = max(1, int(cycle_period * ramp_ratio))  # avoid divide‑by‑zero
-
+    ramp_epochs = max(1, int(cycle_period * ramp_ratio)) 
     if cycle_epoch < ramp_epochs:
         return max_beta * (cycle_epoch + 1) / ramp_epochs
     else:
@@ -59,12 +33,11 @@ def plot_deterministic(x_orig, x_mean, epoch, lead, out_dir, attn: np.ndarray | 
     ax_sig.set_title(f"Epoch {epoch}: Lead {lead} Deterministic")
     if attn is not None:
         data = np.asarray(attn)
-        # ensure time dimension is the last axis
         if data.ndim == 1:
             data = data[None, :]                     # [1, T]
         elif data.shape[0] == len(t) and data.shape[1] != len(t):
             data = data.T                            # [H, T]
-        # draw heat‑map
+        # Heat-map
         ax_attn.imshow(data,
                        aspect="auto",
                        cmap="hot",
@@ -202,7 +175,6 @@ def plot_full_variability(x_orig_full, x_mean_full, x_std_full, epoch, lead,
     fig.tight_layout()
     fig.savefig(os.path.join(out_dir, f"epoch_{epoch:03d}_lead{lead}_full_var.png"))
     plt.close(fig)
-
     
 def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
                         out_dir_det, out_dir_var,

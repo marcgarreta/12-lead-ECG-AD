@@ -2,13 +2,11 @@
 from pathlib import Path
 import sys
 
-# Resolve project root and add src to path
 THIS_FILE = Path(__file__).resolve()
 SRC_DIR   = THIS_FILE.parent
 ROOT_DIR  = SRC_DIR.parent
 sys.path.insert(0, str(SRC_DIR))
 
-# Standard directory locations
 WEIGHTS_DIR = SRC_DIR / "weights"
 DATA_DIR    = ROOT_DIR / "data" / "inference_data"
 CPSC_DIR    = DATA_DIR / "cpsc" / "processed_cpsc"
@@ -47,10 +45,9 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def slide_windows(sig):
     import torch
-    # Ensure tensor
     if not isinstance(sig, torch.Tensor):
         sig = torch.tensor(sig, dtype=torch.float32)
-    # Ensure shape [12, T]
+    # shape = [12, T]
     if sig.ndim != 2:
         raise ValueError(f"Expected 2D signal, got {sig.ndim}D")
     if sig.shape[0] == 12:
@@ -58,36 +55,29 @@ def slide_windows(sig):
     elif sig.shape[1] == 12:
         sig_arr = sig.T
     else:
-        # fallback: if both dims >12, take first 12 rows
         if sig.shape[0] > 12:
             sig_arr = sig[:12, :]
         elif sig.shape[1] > 12:
             sig_arr = sig[:, :12].T
         else:
             raise ValueError(f"Unexpected signal shape {sig.shape}, expected one dimension = 12")
-    # Now sig_arr is [12, T]
     T = sig_arr.shape[1]
-    # Check length
     if T < WINDOW:
         sig_arr = torch.nn.functional.pad(sig_arr, (0, WINDOW - T))
         T = WINDOW
-    # Transpose to [T, 12] for windowing
-    sig_T = sig_arr.T  # [T,12]
+    # Transpose to [T, 12] 
+    sig_T = sig_arr.T  
     wins = []
     for start in range(0, T - WINDOW + 1, STRIDE):
         wins.append(sig_T[start:start+WINDOW])
-    return torch.stack(wins)  # [n_windows, WINDOW, 12]
+    return torch.stack(wins) 
 
 def reconstruct_full(model, sig):
     win_tensor = slide_windows(sig).to(DEVICE)          # [19,500,12]
-    # reshape to [batch, channels, length] for CAE
     win_tensor = win_tensor.permute(0, 2, 1)
     with torch.no_grad():
-        # model returns [batch, channels, length]
         x_mean = model(win_tensor)
-        # reshape back to [batch, length, channels]
         x_mean = x_mean.permute(0, 2, 1)
-    # superponer con stride 250
     recon = torch.zeros((5000, 12), device=DEVICE)
     counts = torch.zeros((5000, 12), device=DEVICE)
     for i, start in enumerate(range(0, 5000 - WINDOW + 1, STRIDE)):
@@ -105,18 +95,15 @@ def reconstruct_full_mean_std(model, sig):
 
 def ecg_score(model, sig):
     win_tensor = slide_windows(sig).to(DEVICE)
-    # reshape for CAE
     win_in = win_tensor.permute(0, 2, 1)
     with torch.no_grad():
         recon_out = model(win_in)
-    # reshape recon back
     recon = recon_out.permute(0, 2, 1)
     err = (win_tensor - recon) ** 2
     return float(err.mean())
 
 def find_best_threshold(y_true, y_scores):
     best_f1, best_thr = -1, 0
-    # reduce grid to 50 candidate thresholds for speed
     for thr in np.percentile(y_scores, np.linspace(0, 100, 100)):
         y_hat = (y_scores > thr).astype(int)
         f1 = f1_score(y_true, y_hat)
@@ -134,7 +121,6 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
     os.makedirs(out_dir_det, exist_ok=True)
     T, n_leads = x_orig_full.shape
     t = np.arange(T)
-    # Compute vmin/vmax for saliency and MSE strips
     if saliency_full is not None:
         sal_min = float(np.nanmin(saliency_full))
         sal_max = float(np.nanmax(saliency_full))
@@ -150,9 +136,7 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
         mae_min -= 1e-6
         mae_max += 1e-6
 
-    # Compute vmin/vmax for anomaly score
     if anomaly_full is not None:
-        # Compute anomaly limits ignoring NaN/Inf
         anomaly_min = float(np.nanmin(anomaly_full))
         anomaly_max = float(np.nanmax(anomaly_full))
         if not np.isfinite(anomaly_min) or not np.isfinite(anomaly_max):
@@ -163,14 +147,12 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
     else:
         anomaly_min = anomaly_max = None
 
-    # --------- Compute common y-axis limits for signal plots ---------
     # Include original signal and reconstruction ±2σ
-    # Compute signal limits, ignoring NaN/Inf
     sig_min = float(np.nanmin(x_orig_full))
     sig_max = float(np.nanmax(x_orig_full))
     if not np.isfinite(sig_min) or not np.isfinite(sig_max):
         sig_min, sig_max = 0.0, 0.0
-    # For variability plot, include ±2σ bounds
+    # Usar 2*std para el rango de la señal
     rec_min = float((x_mean_full - 2*x_std_full).min())
     rec_max = float((x_mean_full + 2*x_std_full).max())
     sig_min = min(sig_min, rec_min)
@@ -278,11 +260,9 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
         cax_sal = fig.add_axes([right_edge, 0.75, cbar_width, cbar_height])
         mpl.colorbar.ColorbarBase(cax_sal, cmap=mpl.colormaps['viridis'], norm=sal_norm, orientation='vertical')
         cax_sal.set_title('Saliency', fontsize=8)
-    # MAE colorbar
     cax_mae = fig.add_axes([right_edge, 0.52, cbar_width, cbar_height])
     mpl.colorbar.ColorbarBase(cax_mae, cmap=mpl.colormaps['Reds'], norm=mae_norm, orientation='vertical')
     cax_mae.set_title('MAE', fontsize=8)
-    # plt.tight_layout(rect=[0, 0, 1, 0.96])  # Removed due to constrained_layout
     out_path = os.path.join(out_dir_det, f'epoch_{epoch:03d}_full_multilead.png')
     plt.savefig(out_path, dpi=150)
     plt.close()
@@ -297,9 +277,7 @@ def main(args):
     FULL_DIR.mkdir(parents=True, exist_ok=True)
     WINDOW_DIR.mkdir(parents=True, exist_ok=True)
     import glob, os, pandas as pd, random
-    # Build list of (file_path, label, record_id)
     samples = None
-    # Priority: MIMIC, then CPSC, then PTB-XL
     if args.mimic_dir:
         files = glob.glob(os.path.join(args.mimic_dir, '*.npy'))
         samples = [(f, 1, os.path.basename(f).replace('.npy','')) for f in files]
@@ -335,17 +313,15 @@ def main(args):
     model.load_state_dict(ckpt_data if isinstance(ckpt_data, dict) else ckpt_data.state_dict())
 
     model.eval()
-    examples = []  # almacenará hasta args.examples ECGs para graficar
+    examples = []  
 
     print()
     ids, ys, scores = [], [], []
     for idx_ex, (fp, true_lbl, rid_ex) in enumerate(samples, start=1):
         sig = torch.tensor(np.load(fp), dtype=torch.float32)
-        # Ensure sig has shape [12, T]
         if sig.ndim == 2 and sig.shape[0] != 12 and sig.shape[1] == 12:
             sig = sig.T
         elif sig.ndim == 2 and sig.shape[0] > 12 and sig.shape[1] > 12:
-            # fallback: take first 12 channels
             print(f"Warning: unexpected signal shape {tuple(sig.shape)}, extracting first 12 rows")
             sig = sig[:12, :]
         elif sig.ndim != 2:
@@ -355,10 +331,9 @@ def main(args):
             # Padding
             sig = F.pad(sig, (0, 5000 - L))
         elif L > 5000:
-            # Recortamos al principio para quedarnos con las 5000 primeras
+            # Truncate
             sig = sig[:, :5000]
 
-        # guardar algunas señales para ejemplos de visualización
         if len(examples) < args.examples:
             examples.append({'sig': sig, 'rid': rid_ex, 'true': int(true_lbl)})
 
@@ -369,7 +344,7 @@ def main(args):
     ys = np.array(ys)
     scores = np.array(scores)
 
-    # Compute threshold for predictions
+    # Compute threshold
     thr, _ = find_best_threshold(ys, scores)
 
     for idx_ex, ex in enumerate(examples, start=1):
@@ -377,55 +352,45 @@ def main(args):
         rid_ex  = ex['rid']
         true_lbl = ex['true']
 
-        # --- Compute BPM and detect unstable intervals ---
-        # Use Lead II (index 1) for R-peak detection
+        # Uso de Lead II para detección de R-peaks
         ecg_ch = sig_ex[1].cpu().numpy()
-        # Detect R-peaks (min distance 0.4s at 500Hz)
+        # Detección de R-peaks 
         peaks, _ = find_peaks(ecg_ch, distance=0.4 * 500)
         if len(peaks) >= 2:
-            times = peaks / 500.0  # seconds
+            times = peaks / 500.0  
             rr = np.diff(times)
-            bpm_inst = 60.0 / rr   # instantaneous BPM
+            bpm_inst = 60.0 / rr  
             bpm_mean = float(np.mean(bpm_inst))
-            # find unstable where deviation >10 BPM
+
             unstable = np.where(np.abs(bpm_inst - bpm_mean) > 10)[0]
         else:
             bpm_mean = float('nan')
             unstable = np.array([], dtype=int)
 
-        # convert unstable rr indices to sample times (use peaks array)
         unstable_times = (peaks[unstable+1] if len(unstable)>0 else np.array([],dtype=int))
 
-        # Compute per-lead saliency by isolating each channel
         T = sig_ex.shape[1]
         n_leads = sig_ex.shape[0]
         saliency_full = np.zeros((T, n_leads))
         for lead in range(n_leads):
-            # zero out other leads
+
             sig_1ch = torch.zeros_like(sig_ex)
             sig_1ch[lead] = sig_ex[lead]
-            # Compute saliency with finer windows
+            # Saliency computation
             win_tensor = []
             sig_arr = sig_1ch
-            # slide with ATTN_WINDOW and ATTN_STRIDE
+
             for start in range(0, T - ATTN_WINDOW + 1, ATTN_STRIDE):
                 win_tensor.append(sig_arr[:, start:start+ATTN_WINDOW].T)
-            win_1ch = torch.stack(win_tensor).to(DEVICE)  # [n_blocks, ATTN_WINDOW, 12]
-            # reshape for CAE
+            win_1ch = torch.stack(win_tensor).to(DEVICE)  
             win_1ch = win_1ch.permute(0, 2, 1)
             with torch.no_grad():
                 attn_out = model(win_1ch)
-                # no recon needed here, extract saliency if model returns it;
-                # if CAE only returns recon, skip saliency extraction
-            # If model returns only recon, attn_out is [n_blocks, 12, ATTN_WINDOW]
-            # For compatibility, mimic saliency as mean of recon error per window
-            # (This is a placeholder; adjust as needed for true saliency)
-            # Compute per-window mean squared error as pseudo-saliency
-            rec_win = attn_out.permute(0, 2, 1)  # [n_blocks, ATTN_WINDOW, 12]
-            input_win = win_1ch.permute(0, 2, 1)  # [n_blocks, ATTN_WINDOW, 12]
+
+            rec_win = attn_out.permute(0, 2, 1)  
+            input_win = win_1ch.permute(0, 2, 1)   
             mse_local = ((input_win - rec_win) ** 2).mean(dim=(1,2)).cpu().numpy()
             a = mse_local
-            # reconstruct timeline for this lead
             sal_ts = np.zeros(T)
             counts = np.zeros(T)
             for i_w, start in enumerate(range(0, T - ATTN_WINDOW + 1, ATTN_STRIDE)):
@@ -434,17 +399,13 @@ def main(args):
             counts[counts == 0] = 1
             saliency_full[:, lead] = sal_ts / counts
 
-        # reconstrucción completa
         recon_m, recon_s = reconstruct_full_mean_std(model, sig_ex)
         n_leads = sig_ex.shape[0]
         t = np.arange(sig_ex.shape[1])
 
-        # Prepare inputs for full-multilead plot
-        # transpose to (T,12)
         x_orig_full = sig_ex.numpy().T
         x_mean_full = recon_m.T.cpu().numpy()
         x_std_full  = recon_s.T.cpu().numpy()
-        # per-timestep anomaly score (MSE + var term)
         mse_full = (x_orig_full - x_mean_full) ** 2
         var_full = np.log(x_std_full ** 2 + 1e-6)
         anomaly_full = ALPHA * mse_full + (1 - ALPHA) * var_full
@@ -452,13 +413,10 @@ def main(args):
         idx_global = ids.index(rid_ex)
         pred_lbl = int(scores[idx_global] > thr)
 
-        # Plot with BPM in title
         def plot_full_multilead_with_bpm(*args, **kwargs):
-            # Patch the plt.suptitle call inside plot_full_multilead
-            # We monkeypatch plt.suptitle temporarily
             orig_suptitle = plt.suptitle
             def new_suptitle(*a, **k):
-                # Replace with BPM in title
+                # Put BPM ()
                 return orig_suptitle(
                     f'Epoch {idx_ex}: true={true_lbl}, pred={pred_lbl}, BPM={bpm_mean:.1f}',
                     fontsize=14
@@ -482,41 +440,38 @@ def main(args):
             true_lbl=true_lbl,
             pred_lbl=pred_lbl
         )
-        # --- Window-based full-multilead visualization for the window with highest anomaly score ---
-        # Identify window index with highest per-window anomaly (MAE) score
-        win_tensor = slide_windows(sig_ex)  # [n_windows, WINDOW, 12]
+
+        win_tensor = slide_windows(sig_ex)  
         n_windows = win_tensor.shape[0]
-        # compute MAE per window
-        win_dev = win_tensor.to(DEVICE).permute(0, 2, 1)  # [n_windows, 12, WINDOW]
+        win_dev = win_tensor.to(DEVICE).permute(0, 2, 1)  
         with torch.no_grad():
-            recon_win = model(win_dev).permute(0, 2, 1)  # [n_windows, WINDOW, 12]
+            recon_win = model(win_dev).permute(0, 2, 1)  
         mae_per_window = torch.mean((win_tensor - recon_win) ** 2, dim=(1,2)).cpu().numpy()
         best_idx = int(np.argmax(mae_per_window))
-        # extract signals for best window
-        x_win_orig = win_tensor[best_idx].numpy()      # [WINDOW,12]
-        x_win_recon = recon_win[best_idx].cpu().numpy()  # [WINDOW,12]
-        # compute saliency per lead in this window using MAE
-        sal_win = np.abs(x_win_orig - x_win_recon)     # [WINDOW,12]
-        # prepare time axis
+        x_win_orig = win_tensor[best_idx].numpy()      
+        x_win_recon = recon_win[best_idx].cpu().numpy()  
+        sal_win = np.abs(x_win_orig - x_win_recon)      
+
         t_win = np.arange(WINDOW)
-        # plot multi-lead for this window
         fig_w = plt.figure(figsize=(14, 2.5 * 12), constrained_layout=True)
         gs_w = gridspec.GridSpec(12 * 3, 1, height_ratios=[5,1,1] * 12, hspace=0.2)
         for i in range(12):
-            # original & recon
+            # Original vs reconstructed signal
             ax0 = fig_w.add_subplot(gs_w[3*i])
             ax0.plot(t_win, x_win_orig[:,i], color='black', lw=1)
             ax0.plot(t_win, x_win_recon[:,i], color='C1', lw=1, ls='--')
             ax0.set_ylabel(f'Lead {i+1}')
             if i==0:
                 ax0.legend(['Orig','Recon'], loc='upper right', fontsize='small')
-            # saliency strip (MAE)
+            
+            # Saliecny 
             ax1 = fig_w.add_subplot(gs_w[3*i+1], sharex=ax0)
             ax1.imshow(sal_win[:,i][None,:], aspect='auto', cmap='viridis',
                        vmin=np.percentile(sal_win[:,i],1),
                        vmax=np.percentile(sal_win[:,i],99),
                        extent=[t_win[0], t_win[-1], 0, 1])
             ax1.axis('off')
+            
             # MAE strip
             ax2 = fig_w.add_subplot(gs_w[3*i+2], sharex=ax0)
             ax2.imshow(sal_win[:,i][None,:], aspect='auto', cmap='Reds',
@@ -528,21 +483,18 @@ def main(args):
         fig_w.savefig(out_win, dpi=150)
         plt.close(fig_w)
         print(f'➜ Guardado ventana {best_idx} en {out_win}')
-        # --- Window-based MAE heatmap visualization ---
-        # Compute windows
-        win_tensor = slide_windows(sig_ex)  # [n_windows, WINDOW, 12]
+        # MSE
+        win_tensor = slide_windows(sig_ex)  
         n_windows = win_tensor.shape[0]
         n_leads = win_tensor.shape[2]
-        # Move to device and permute for model
-        win_tensor_dev = win_tensor.to(DEVICE).permute(0, 2, 1)  # [n_windows, 12, WINDOW]
+
+        win_tensor_dev = win_tensor.to(DEVICE).permute(0, 2, 1) 
         with torch.no_grad():
-            recon_win = model(win_tensor_dev)  # [n_windows, 12, WINDOW]
-        # Permute back to [n_windows, WINDOW, 12]
+            recon_win = model(win_tensor_dev)  
         recon_win = recon_win.permute(0, 2, 1)
-        # Compute MAE for each window and lead, average over time axis
-        abs_err = torch.abs(win_tensor.to(recon_win.device) - recon_win)  # [n_windows, WINDOW, 12]
-        mae_window_lead = abs_err.mean(dim=1).cpu().numpy()  # [n_windows, 12]
-        # Plot heatmap: x-axis windows, y-axis leads
+        abs_err = torch.abs(win_tensor.to(recon_win.device) - recon_win)  
+        mae_window_lead = abs_err.mean(dim=1).cpu().numpy()  
+        # Plot of heatmap
         fig, ax = plt.subplots(figsize=(max(6, n_windows/3), 5))
         im = ax.imshow(mae_window_lead.T, aspect='auto', cmap='Reds', origin='lower')
         ax.set_xlabel('Window')

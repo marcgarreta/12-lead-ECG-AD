@@ -3,10 +3,9 @@ from torch.utils.data import Dataset
 import numpy as np
 from dataset import ECGDataset
 
+# WindowDataset class for creating overlapping windows from ECG signals (e.g. from (12, 5000) to (12, 500))
+# A lead (5000 data points) is split into multiple windows (size 500 and stride 250 = 19 windows per lead)
 class WindowDataset(Dataset):
-    """
-    Wraps NumpyECGDataset to yield sliding windows along the time axis.
-    """
     def __init__(
         self,
         ptbxl_dir: str = None,
@@ -25,7 +24,6 @@ class WindowDataset(Dataset):
         self.window_size = window_size
         self.stride = stride
         self.indexes = []
-        # Precompute mappings (file_idx, start_idx)
         for file_idx in range(len(self.base)):
             for start in range(0, sample_length - window_size + 1, stride):
                 self.indexes.append((file_idx, start))
@@ -35,9 +33,8 @@ class WindowDataset(Dataset):
 
     def __getitem__(self, idx: int) -> torch.Tensor:
         file_idx, start = self.indexes[idx]
-        sig = self.base[file_idx]  # tensor shape: (sample_length, leads)
+        sig = self.base[file_idx]  
         window = sig[start : start + self.window_size]
-        # Verify window data for NaNs or infinite values
         if torch.isnan(window).any():
             print(f"Warning: NaN values found in window from file {self.base.files[file_idx]}, start {start}")
         if torch.isinf(window).any():
