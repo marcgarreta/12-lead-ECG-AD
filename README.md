@@ -19,7 +19,7 @@ This code accompanies my **Final Degree Project in Artificial Intelligence** (Un
 (Hablar de models 
 (que hace cada modelo (sintetico))
 (decir que VAE BILSTM MHA es novel)
-(
+(poner arquitectura, y enlazar con report para más detalles) 
 
 ---
 
