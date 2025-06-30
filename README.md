@@ -30,7 +30,7 @@ Before you begin, download the ECG datasets in case of training:
 
 - **MIMIC-IV ECG (restricted)**
   - URL: https://physionet.org/content/mimic-iv-ecg/1.0/
-  - ⚠️ Access requires an authenticated PhysioNet account and approval to the MIMIC project.
+  - Access requires an authenticated PhysioNet account and approval to the MIMIC project.
 
 - **PTB-XL (open)**
   - URL: https://physionet.org/content/ptb-xl/1.0.3/
