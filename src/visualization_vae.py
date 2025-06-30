@@ -1,7 +1,12 @@
+import sys
+from pathlib import Path
+# ensure project root on path so `src` can be imported
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 import os, math, json, argparse, numpy as np, pandas as pd, torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import seaborn as sns 
 from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score, recall_score, roc_auc_score
 from tqdm.auto import tqdm
@@ -9,11 +14,24 @@ import torch
 
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter1d
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-from model_bilstm import VAE
+from src.models.vae_bilstm_attention import VAE
+
+# --------- Project directory setup ---------
+from pathlib import Path
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+IMG_DIR = PROJECT_ROOT / 'img'
+PLOTS_VAE_DIR = IMG_DIR / 'plots_vae'
+
+# ----------------- Top-level constants -----------------
+BASE_PLOT_DIR_VAE = str(PLOTS_VAE_DIR)
+WINDOW = 500
+STRIDE = 250
 
 BETA   = 0.3                   
 ALPHA  = 0.7          
@@ -134,6 +152,11 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
     os.makedirs(out_dir_det, exist_ok=True)
     T, n_leads = x_orig_full.shape
     t = np.arange(T)
+    # Compose subplot titles (not currently used, but per instruction)
+    subplot_titles = sum([
+        [f"Lead {i+1}", "", "", ""]
+        for i in range(n_leads)
+    ], [])
     # Compute vmin/vmax for attention and MSE strips
     if attn_full is not None:
         attn_min = float(np.nanmin(attn_full))
@@ -180,9 +203,9 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
     rec_max = float((x_mean_full + 2*x_std_full).max())
     sig_min = min(sig_min, rec_min)
     sig_max = max(sig_max, rec_max)
-    fig = plt.figure(figsize=(14, 2.5 * n_leads), constrained_layout=True)
+    fig = plt.figure(figsize=(14, 6 * n_leads), constrained_layout=True)
     gs = gridspec.GridSpec(n_leads * 4, 1,
-                           height_ratios=[5,5,1,1] * n_leads,
+                           height_ratios=[8,8,2,2] * n_leads,
                            hspace=0.2)
 
     def _plot_strip(ax, data, idx, cmap, vmin=None, vmax=None):
@@ -209,15 +232,25 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
                          color='C1', alpha=0.3)
         # Set common y-limits for all leads
         ax0.set_ylim(sig_min, sig_max)
-        ax0.set_ylabel(f'L{i:02d}')
+        ax0.set_ylabel(f'Lead {i+1}', labelpad=8)
         if i == 0:
             ax0.legend(['Original','Recon'], loc='upper right', fontsize='small')
 
         # 2) Anomaly score line (same height as ax0)
         ax1 = fig.add_subplot(gs[4*i+1], sharex=ax0)
         if anomaly_full is not None:
-            ax1.plot(t, anomaly_full[:, i], color='green', lw=1)
-            ax1.set_ylim(sal_min, sal_max)
+            lead_anom = anomaly_full[:, i]
+            ax1.plot(t, lead_anom, color='green', lw=1)
+            # compute finite min/max for this lead's anomaly
+            fin = np.isfinite(lead_anom)
+            if fin.any():
+                amin = float(np.nanmin(lead_anom[fin]))
+                amax = float(np.nanmax(lead_anom[fin]))
+                if abs(amax - amin) < 1e-6:
+                    amax = amin + 1e-6
+                ax1.set_ylim(amin, amax)
+            else:
+                ax1.set_ylim(0.0, 1.0)
             ax1.set_ylabel('AS')
             if i < n_leads-1:
                 ax1.set_xticks([])
@@ -263,7 +296,7 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
 
     # (Legend for strips removed)
 
-    plt.suptitle(f'Epoch {epoch}: true={true_lbl}, pred={pred_lbl}', fontsize=14)
+    plt.suptitle(f'Epoch {epoch}: true={true_lbl}, pred={pred_lbl}', fontsize=14, y=0.88)
 
     import matplotlib as mpl
     from matplotlib import cm
@@ -276,17 +309,20 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
 
     # Colorbar positions
     cbar_width = 0.015
-    cbar_height = 0.18
     right_edge = 0.93
     # Attention colorbar
     if attn_full is not None:
-        cax_attn = fig.add_axes([right_edge, 0.75, cbar_width, cbar_height])
-        mpl.colorbar.ColorbarBase(cax_attn, cmap=mpl.colormaps['viridis'], norm=attn_norm, orientation='vertical')
+        cax_attn = fig.add_axes([right_edge, 0.75, cbar_width, 0.10])
+        cbar_attn = mpl.colorbar.ColorbarBase(cax_attn, cmap=mpl.colormaps['viridis'], norm=attn_norm, orientation='vertical')
+        cbar_attn.ax.yaxis.offsetText.set_visible(False)
         cax_attn.set_title('Attention', fontsize=8)
+        cax_attn.tick_params(labelsize=8)
     # MSE colorbar
-    cax_mse = fig.add_axes([right_edge, 0.52, cbar_width, cbar_height])
-    mpl.colorbar.ColorbarBase(cax_mse, cmap=mpl.colormaps['Blues'], norm=mse_norm, orientation='vertical')
+    cax_mse = fig.add_axes([right_edge, 0.55, cbar_width, 0.10])
+    cbar_mse = mpl.colorbar.ColorbarBase(cax_mse, cmap=mpl.colormaps['Blues'], norm=mse_norm, orientation='vertical')
+    cbar_mse.ax.yaxis.offsetText.set_visible(False)
     cax_mse.set_title('MSE', fontsize=8)
+    cax_mse.tick_params(labelsize=6)
     # plt.tight_layout(rect=[0, 0, 1, 0.96])  # Removed due to constrained_layout
     out_path = os.path.join(out_dir_det, f'epoch_{epoch:03d}_full_multilead.png')
     plt.savefig(out_path, dpi=150)
@@ -298,7 +334,7 @@ def main(args):
     import glob, os, pandas as pd, random
     # Build list of (file_path, label, record_id)
     samples = None
-    # Priority: MIMIC, then CPSC, then PTB-XL
+    # Priority: MIMIC, then CPSC
     if args.mimic_dir:
         files = glob.glob(os.path.join(args.mimic_dir, '*.npy'))
         samples = [(f, 1, os.path.basename(f).replace('.npy','')) for f in files]
@@ -314,17 +350,6 @@ def main(args):
                    for _, row in cpsc_df.iterrows()]
         if args.cpsc_max_samples is not None:
             samples = random.sample(samples, min(args.cpsc_max_samples, len(samples)))
-    elif args.ptbxl_data and args.ptbxl_csv:
-        ptbxl_df = pd.read_csv(args.ptbxl_csv)
-        ptbxl_df['path'] = ptbxl_df['Recording'].astype(str).apply(
-            lambda r: os.path.join(args.ptbxl_data, f"{r}.npy"))
-        ptbxl_df = ptbxl_df[ptbxl_df.path.map(os.path.exists)]
-        samples = [(row['path'],
-                    int(row['label']) if 'label' in ptbxl_df.columns else 0,
-                    row['Recording'])
-                   for _, row in ptbxl_df.iterrows()]
-        if args.ptbxl_max_samples is not None:
-            samples = random.sample(samples, min(args.ptbxl_max_samples, len(samples)))
     else:
         raise ValueError("Por favor especifique un directorio de visualización y su CSV")
 
@@ -442,6 +467,8 @@ def main(args):
         # per-timestep anomaly score (MSE + var term)
         mse_full = (x_orig_full - x_mean_full) ** 2
         var_full = np.log(x_std_full ** 2 + 1e-6)
+        # Apply ReLU to the log-variance term to ensure non-negativity
+        var_full = np.maximum(var_full, 0)
         anomaly_full = ALPHA * mse_full + (1 - ALPHA) * var_full
 
         idx_global = ids.index(rid_ex)
@@ -456,7 +483,8 @@ def main(args):
                 # Replace with BPM in title
                 return orig_suptitle(
                     f'Epoch {idx_ex}: true={true_lbl}, pred={pred_lbl}, BPM={bpm_mean:.1f}',
-                    fontsize=14
+                    fontsize=14, 
+                    y=0.90
                 )
             plt.suptitle = new_suptitle
             try:
@@ -470,10 +498,42 @@ def main(args):
             x_mean_full,
             x_std_full,
             epoch=idx_ex,
-            out_dir_det=args.plot_dir,
-            out_dir_var=args.plot_dir,
+            out_dir_det=args.full_plot_dir,
+            out_dir_var=args.full_plot_dir,
             attn_full=attn_full,
             anomaly_full=anomaly_full,
+            true_lbl=true_lbl,
+            pred_lbl=pred_lbl
+        )
+
+        # --- Window-based multilead plot: choose window with max anomaly sum ---
+        # anomaly_full is shape (T, n_leads)
+        total_len = x_orig_full.shape[0]
+        n_windows = (total_len - WINDOW) // STRIDE + 1
+        window_sums = []
+        for w in range(n_windows):
+            start = w * STRIDE
+            end   = start + WINDOW
+            window_sums.append(anomaly_full[start:end, :].sum())
+        best_w = int(np.argmax(window_sums))
+        ws = best_w * STRIDE
+        we = ws + WINDOW
+
+        # slice the full arrays to the best window
+        x_orig_win   = x_orig_full[ws:we, :]
+        x_mean_win   = x_mean_full[ws:we, :]
+        x_std_win    = x_std_full[ws:we, :]
+        anomaly_win  = anomaly_full[ws:we, :]
+        saliency_win = attn_full[ws:we, :] if 'attn_full' in locals() else None
+
+        # plot the single-window multilead
+        plot_full_multilead_with_bpm(
+            x_orig_win, x_mean_win, x_std_win,
+            epoch=idx_ex,
+            out_dir_det=args.window_plot_dir,
+            out_dir_var=args.window_plot_dir,
+            attn_full=saliency_win,
+            anomaly_full=anomaly_win,
             true_lbl=true_lbl,
             pred_lbl=pred_lbl
         )
@@ -484,40 +544,46 @@ if __name__=='__main__':
     p = argparse.ArgumentParser()
 
     # MODEL PARAMETERS
-    p.add_argument('--ckpt', required=True,
+    p.add_argument('--ckpt', default=str(PROJECT_ROOT / 'src' / 'weights' / 'best_vae_attn_model.pt'),
                    help='Path to model checkpoint')
 
     # MAX SAMPLES 
-    p.add_argument('--ptbxl_max_samples', type=int, default=10,
+    p.add_argument('--ptbxl_max_samples', type=int, default=100,
                    help='Máximo de muestras a usar de PTB-XL (antes de mezclar)')
-    p.add_argument('--cpsc_max_samples',  type=int, default=10,
+    p.add_argument('--cpsc_max_samples',  type=int, default=100,
                    help='Máximo de muestras a usar de CPSC (antes de mezclar)')
-    p.add_argument('--mimic_max_samples', type=int, default=10,
+    p.add_argument('--mimic_max_samples', type=int, default=100,
                    help='Máximo de muestras a usar de MIMIC (antes de mezclar)')
 
     # Number of example signals to plot
-    p.add_argument('--examples', type=int, default=10,
+    p.add_argument('--examples', type=int, default=100,
                    help='Número de señales a graficar como ejemplo')
 
     # CPSC dataset paths
-    p.add_argument('--cpsc_csv', type=str, required=True,
+    p.add_argument('--cpsc_csv', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_reference.csv'),
                    help='Path to processed_reference.csv for CPSC evaluation')
-    p.add_argument('--cpsc_dir', type=str, required=True,
+    p.add_argument('--cpsc_dir', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_cpsc'),
                    help='Directory containing processed_cpsc .npy files')
 
-    # PTB-XL dataset paths
-    p.add_argument('--ptbxl_data', type=str, required=True,
+    # PTB-XL dataset paths (unused, kept for compatibility)
+    p.add_argument('--ptbxl_data', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'ptbxl_zscore_200'),
                    help='Directory containing PTB-XL .npy files')
-    p.add_argument('--ptbxl_csv', type=str, required=True,
+    p.add_argument('--ptbxl_csv', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'ptbxl_zscore_200' / 'labels.csv'),
                    help='CSV file for PTB-XL dataset')
 
     # MIMIC dataset paths
-    p.add_argument('--mimic_dir', type=str, required=True,
+    p.add_argument('--mimic_dir', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'mimic_npy_abnormal'),
                    help='Directory containing MIMIC abnormal .npy files (all label=1)')
 
     # Directory to save plots
-    p.add_argument('--plot_dir', type=str, required=True,
+    p.add_argument('--plot_dir', type=str, default=BASE_PLOT_DIR_VAE,
                      help='Directory to save visualization plots')
     
     args = p.parse_args()
+    # prepare separate folders for full and window-based plots
+    args.full_plot_dir   = os.path.join(args.plot_dir, 'full')
+    args.window_plot_dir = os.path.join(args.plot_dir, 'windows')
+    os.makedirs(args.full_plot_dir, exist_ok=True)
+    os.makedirs(args.window_plot_dir, exist_ok=True)
     main(args)
+
