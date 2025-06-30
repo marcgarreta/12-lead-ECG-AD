@@ -71,6 +71,7 @@ python training.py --dataset [ptbxl or mimic]
 
 # evaluation (to evaluate using quantitative metrics)
 cd src
+python evaluation_metrics.py
 
 # visualization (to visualize defined samples from the test set)
 python visualization_cae.py #if you want to plot the cae visualizations
