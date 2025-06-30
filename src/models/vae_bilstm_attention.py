@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch.nn import MultiheadAttention
 
 # Inspired by OmniAnomaly (KDD ’19) and MA-VAE (Multi-head Attention-based VAE; arXiv:2309.02253)
+
+# VAE-BiLSTM-MHA Model
 class VAE(nn.Module):
     def __init__(self,
                  n_leads: int,
@@ -30,7 +32,7 @@ class VAE(nn.Module):
                                  batch_first=True,
                                  bidirectional=True)
 
-        enc_out_dim = 2 * n_hidden_enc[1]           # because bidirectional
+        enc_out_dim = 2 * n_hidden_enc[1]           
 
         self.to_stats = nn.Sequential(
             nn.Linear(enc_out_dim, enc_out_dim // 2),
@@ -40,7 +42,7 @@ class VAE(nn.Module):
         )
 
         # Multihead Attention
-        self.qk_proj = nn.Linear(n_leads, n_latent)  # project input to latent dim
+        self.qk_proj = nn.Linear(n_leads, n_latent)
         self.ma = MultiheadAttention(embed_dim=n_latent,
                                      num_heads=8,
                                      batch_first=True)
@@ -85,39 +87,39 @@ class VAE(nn.Module):
         h, _ = self.enc_lstm2(h)
 
         # per‑timestep latent parameters
-        stats = self.to_stats(h)                 # (B, T, 2*latent)
+        stats = self.to_stats(h)                 
         mu, logvar = stats.chunk(2, dim=-1)
 
         # reparameterisation
-        z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)  # (B,T,latent)
+        z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)  
 
         # Lead-wise attention
-        B, T, L = x.shape  # L == self.n_feats
-        x_leads = x.reshape(B * T, L, 1)           # (B*T, L, 1)
-        lead_emb = self.lead_embed(x_leads)        # (B*T, L, latent)
+        B, T, L = x.shape  
+        x_leads = x.reshape(B * T, L, 1)    
+        lead_emb = self.lead_embed(x_leads)       
         lead_out, lead_w = self.lead_attn(lead_emb, lead_emb, lead_emb,
-                                          need_weights=True)      # lead_w: (B*T, heads, L, L)
+                                          need_weights=True)      
 
-        lead_w = lead_w.mean(dim=1)                # (B*T, L)
-        lead_w = lead_w.view(B, T, L)              # (B, T, L)
+        lead_w = lead_w.mean(dim=1)               
+        lead_w = lead_w.view(B, T, L)              
 
-        lead_out = lead_out.mean(dim=1)            # (B*T, latent)
+        lead_out = lead_out.mean(dim=1)            
         lead_out = lead_out.view(B, T, self.n_latent)
         z = z + lead_out
 
         # Multihead Attention
-        qk = self.qk_proj(x)                     # (B,T,latent)
-        A, A_weights = self.ma(qk, qk, z, need_weights=True)               # (B,T,latent)
+        qk = self.qk_proj(x)                    
+        A, A_weights = self.ma(qk, qk, z, need_weights=True)             
 
         # Decoder
         d, _ = self.dec_lstm1(A)
         d, _ = self.dec_lstm2(d)
-        rec_stats = self.to_recon(d)            # (B,T,2*n_leads)
+        rec_stats = self.to_recon(d)           
         x_mean, x_logvar = rec_stats.chunk(2, dim=-1)
 
         return x_mean, x_logvar, mu, logvar, A_weights, lead_w
 
-    # ---------- loss ----------
+    # Loss function
     def loss_function(self, x, x_mean, x_logvar, mu, logvar):
         """
         Loss function for the VAE: reconstruction loss + KL divergence.

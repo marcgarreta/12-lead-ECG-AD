@@ -4,7 +4,34 @@ import torch.nn.functional as F
 import numpy as np
 from torch.distributions.normal import Normal
 
-# ----- Utility Layers -----
+# Inspired by OmniAnomaly (KDD ’19) and MA-VAE (Multi-head Attention-based VAE; arXiv:2309.02253)
+
+# Loss Function
+def loss_function(x, x_mean, x_logvar, z_mean, z_logvar, beta):
+    dist = Normal(x_mean, torch.exp(0.5 * x_logvar))
+    log_px = dist.log_prob(x).sum(dim=[1, 2])
+    recon = -log_px.mean()
+    kl = 0.5 * (torch.exp(z_logvar) + z_mean**2 - 1 - z_logvar).sum(dim=[1, 2]).mean()
+    return recon + beta * kl, recon, kl
+
+# Beta Scheduler
+class BetaScheduler:
+    def __init__(self, total_epochs, grace, start=1e-8, end=1e-2, mode='cyclical'):
+        self.total = total_epochs
+        self.grace = grace
+        self.start = start
+        self.end = end
+        self.mode = mode
+        self.betas = np.linspace(start, end, total_epochs)
+    def __call__(self, epoch):
+        if epoch < self.grace or self.mode == 'normal':
+            return self.start + (self.end - self.start) * (epoch / self.grace)
+        if self.mode == 'monotonic':
+            return float(self.betas[min(epoch, self.total - 1)])
+        idx = (epoch - self.grace) % self.total
+        return float(self.betas[idx])
+    
+# Gaussian Noise 
 class GaussianNoise(nn.Module):
     def __init__(self, std=0.01):
         super().__init__()
@@ -14,7 +41,7 @@ class GaussianNoise(nn.Module):
             return x + torch.randn_like(x) * self.std
         return x
 
-# ----- Model Components -----
+# Encoder
 class VAEEncoder(nn.Module):
     def __init__(self, seq_len, n_leads, latent_dim):
         super().__init__()
@@ -34,7 +61,8 @@ class VAEEncoder(nn.Module):
         z = z_mean + torch.exp(0.5 * z_logvar) * eps
         return z_mean, z_logvar, z, out
 
-class MA(nn.Module):
+# Multi-head Attention
+class MHA(nn.Module):
     def __init__(self, n_leads, latent_dim, n_heads=8):
         super().__init__()
         self.to_q = nn.Linear(n_leads, latent_dim)
@@ -46,6 +74,7 @@ class MA(nn.Module):
     
         return attn_out, attn_weights   
 
+# Decoder
 class VAEDecoder(nn.Module):
     def __init__(self, seq_len, n_leads, latent_dim):
         super().__init__()
@@ -63,18 +92,19 @@ class VAEDecoder(nn.Module):
         x_recon = x_mean + torch.exp(0.5 * x_logvar) * eps
         return x_mean, x_logvar, x_recon
 
-class MA_VAE(nn.Module):
+# VAE-BiLSTM-MHA Model
+class VAE_BILSTM_MHA(nn.Module):
     def __init__(self, seq_len, n_leads, latent_dim):
         super().__init__()
         self.encoder = VAEEncoder(seq_len, n_leads, latent_dim)
-        self.ma = MA(n_leads, latent_dim)
+        self.mha = MHA(n_leads, latent_dim)
         self.decoder = VAEDecoder(seq_len, n_leads, latent_dim)
 
     def forward(self, x):
         # Encode
         z_mean, z_logvar, z, _ = self.encoder(x)
         # Multi-head attention returns output + weights
-        attn_out, attn_weights = self.ma(x, z)
+        attn_out, attn_weights = self.mha(x, z)
         # Decode
         x_mean, x_logvar, x_recon = self.decoder(attn_out)
         # Focus score: mean absolute reconstruction error per sample
@@ -82,38 +112,8 @@ class MA_VAE(nn.Module):
         return x_mean, x_logvar, x_recon, z_mean, z_logvar, attn_weights, focus
 
     def phase1(self, x):
-        """
-        First inference phase: returns reconstruction, attention weights, and focus.
-        """
         _, _, x_recon, _, _, attn_weights, focus = self.forward(x)
         return x_recon, attn_weights, focus
 
     def phase2(self, x):
-        """
-        Second inference phase (identical to phase1 for MA-VAE).
-        """
         return self.phase1(x)
-
-# ----- Loss & Scheduler -----
-def loss_function(x, x_mean, x_logvar, z_mean, z_logvar, beta):
-    dist = Normal(x_mean, torch.exp(0.5 * x_logvar))
-    log_px = dist.log_prob(x).sum(dim=[1, 2])
-    recon = -log_px.mean()
-    kl = 0.5 * (torch.exp(z_logvar) + z_mean**2 - 1 - z_logvar).sum(dim=[1, 2]).mean()
-    return recon + beta * kl, recon, kl
-
-class BetaScheduler:
-    def __init__(self, total_epochs, grace, start=1e-8, end=1e-2, mode='cyclical'):
-        self.total = total_epochs
-        self.grace = grace
-        self.start = start
-        self.end = end
-        self.mode = mode
-        self.betas = np.linspace(start, end, total_epochs)
-    def __call__(self, epoch):
-        if epoch < self.grace or self.mode == 'normal':
-            return self.start + (self.end - self.start) * (epoch / self.grace)
-        if self.mode == 'monotonic':
-            return float(self.betas[min(epoch, self.total - 1)])
-        idx = (epoch - self.grace) % self.total
-        return float(self.betas[idx])
