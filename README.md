@@ -14,6 +14,16 @@ This code accompanies my **Final Degree Project in Artificial Intelligence** (Un
 
 ---
 
+## Dashboard
+![User Interface Example](img/dashboard/DASHBOARD.png)
+
+---
+
+## Results
+![Results](img/results/evaluation_metrics.png)
+
+---
+
 ## Quick start
 
 ```bash
