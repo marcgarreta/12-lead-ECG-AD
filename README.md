@@ -69,15 +69,11 @@ python pre-process.py --dataset ptbxl --input-dir {path_of_ptb-xl-a-large-public
 cd src
 python training.py --dataset [ptbxl or mimic or both]
 
-# evaluation (to evaluate using quantitative metrics)
-cd src
-python evaluation_metrics.py
-
 # visualization (to visualize defined samples from the test set)
 python visualization_cae.py #if you want to plot the cae visualizations
 python visualization_vae.py #if you want to plot the vae visualizations
 
-# ui (to run the local web application
+# ui (to run the local web application)
 src ui
 python app.py 
 ´´´
