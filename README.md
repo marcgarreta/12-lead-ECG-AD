@@ -1,27 +1,26 @@
-# 12-lead-ECG-AD
+# 12-Lead ECG Anomaly Detection
 
-ECG Anomaly Detection Pipeline
+Unsupervised detection and localisation of anomalies in 12-lead electrocardiograms (ECGs) using attention-augmented variational autoencoders, plus an interactive Dash dashboard for visual triage.
 
-This project implements an anomaly detection pipeline for ECG data using Python and PyTorch. The models are trained exclusively on normal (non-anomalous) recordings from the MIMIC-IV ECG dataset.
+---
 
-Project Structure
-	•	src/ - Contains implementations of the five different models evaluated for anomaly detection.
-	•	src/data_preprocessing/ - Includes scripts for preprocessing the PTB-XL and MIMIC-IV ECG datasets.
+## Academic context
 
-Models Evaluated
+This code accompanies my **Final Degree Project in Artificial Intelligence** (Universitat Autònoma de Barcelona, Escola d’Enginyeria).
 
-In the src/ directory, you will find five distinct model architectures, each with its own training and evaluation scripts:
-	1.	Convolutional Autoencoder (CAE)
-	2.	Autoencoder with Attention (AE + Attention)
-	3.	Variational Autoencoder with Local Attention (VAE + Local Attention)
-	4.	Variational Autoencoder with Global Attention (VAE + Global Attention)
-	5.	Variational Autoencoder with GRU Layers (VAE + GRU)
+* **Author:** Marc Garreta Basora  
+* **Supervisor:** Dr. Mehmet Oguz Mulayim – [@omulayim](https://github.com/omulayim)  
+* **Report:** see `/docs/final_report.pdf` for a full technical write-up.
 
-Data Preprocessing
+---
 
-Preprocessing routines are stored under preprocessing/:
-	•	PTB-XL: Signal normalization, heartbeat segmentation, and noise filtering.
-	•	MIMIC-IV ECG: Raw signal extraction, resampling, and artifact removal.
+## Quick start
 
+```bash
+# clone repo
+git clone https://github.com/marcgarreta/12-lead-ECG-AD
+cd 12-lead-ECG-AD
 
-Developed as part of the Undergraduate Thesis (TFG) on ECG Anomaly Detection.
+# create & activate environment
+conda env create -f environment.yml
+conda activate ecg-anomaly-detection
