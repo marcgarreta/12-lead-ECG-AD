@@ -4,9 +4,9 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 # Adaptation of CAE-M Model (TKDE 21)
-class CAE_M(nn.Module):
+class CAE(nn.Module):
     def __init__(self, in_channels=12):
-        super(CAE_M, self).__init__()
+        super(CAE, self).__init__()
 
         # Encoder
         self.encoder = nn.Sequential(
