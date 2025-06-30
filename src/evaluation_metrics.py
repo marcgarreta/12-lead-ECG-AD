@@ -15,7 +15,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # Ensure MA_VAE package is on path
 import sys
-# Ensure MA_VAE package is on path
 sys.path.insert(0, str(ROOT / 'src'))
 CPSC_CSV_DEFAULT = ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_reference_balanced.csv'
 CPSC_DIR_DEFAULT = ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_cpsc'
@@ -26,7 +25,7 @@ CAE_CKPT_DEFAULT = WEIGHTS_DIR / 'best_cae_model.pth'
 
 from models.vae_bilstm_attention import VAE
 from models.cae import CAE
-from MA_VAE.MA_VAE import MA_VAE, VAEEncoder, VAEDecoder, GaussianNoise, MA
+from models.vae_bilstm_mha import VAE_BILSTM_MHA, VAEEncoder, VAEDecoder, GaussianNoise, MHA
 
 WINDOW = 500
 STRIDE = 250
@@ -220,7 +219,7 @@ if __name__=='__main__':
     p.add_argument('--cpsc_dir', type=str,
                    default=str(CPSC_DIR_DEFAULT),
                    help='Directory containing processed_cpsc .npy files')
-    p.add_argument('--cpsc_max_samples', type=int, default=None,
+    p.add_argument('--cpsc_max_samples', type=int, default=10,
                    help='Maximum number of CPSC samples to evaluate (for quick tests)')
 
     args = p.parse_args()
