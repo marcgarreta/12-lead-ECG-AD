@@ -1,3 +1,9 @@
+from pathlib import Path
+import sys
+# Project root is one level above src/
+ROOT = Path(__file__).resolve().parents[1]
+# Ensure src/ is on Python path for imports
+sys.path.insert(0, str(ROOT / 'src'))
 import os
 import numpy as np
 import torch
@@ -7,8 +13,8 @@ from sklearn.model_selection import train_test_split
 import random
 import matplotlib.pyplot as plt
 from torch.cuda.amp import autocast, GradScaler
-from dataset import WindowDataset  
-from model_bilstm import VAE  
+from data.dataset import WindowDataset  
+from models.vae_bilstm_attention import VAE  
 
 def cyclical_annealing_beta(epoch: int,
                             cycle_period: int = 10,
@@ -21,351 +27,9 @@ def cyclical_annealing_beta(epoch: int,
     else:
         return max_beta
 
-def plot_deterministic(x_orig, x_mean, epoch, lead, out_dir, attn: np.ndarray | None = None):
-    os.makedirs(out_dir, exist_ok=True)
-    t = range(x_orig.shape[0])
-    fig, (ax_sig, ax_attn) = plt.subplots(
-        2, 1, figsize=(10, 4), sharex=True, gridspec_kw={"height_ratios": [4, 1]}
-    )
-    ax_sig.plot(t, x_orig[:, lead], label="Original", alpha=0.7)
-    ax_sig.plot(t, x_mean[:, lead], label="Reconstruction", lw=2)
-    ax_sig.legend()
-    ax_sig.set_title(f"Epoch {epoch}: Lead {lead} Deterministic")
-    if attn is not None:
-        data = np.asarray(attn)
-        if data.ndim == 1:
-            data = data[None, :]                     # [1, T]
-        elif data.shape[0] == len(t) and data.shape[1] != len(t):
-            data = data.T                            # [H, T]
-        # Heat-map
-        ax_attn.imshow(data,
-                       aspect="auto",
-                       cmap="hot",
-                       extent=[0, data.shape[-1], 0, data.shape[0]])
-        ax_attn.set_yticks([])
-        ax_attn.set_xticks([])
-        for spine in ax_attn.spines.values():
-            spine.set_visible(False)
-    else:
-        ax_attn.axis("off")
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, f"epoch_{epoch:03d}_lead{lead}_det.png"))
-    plt.close(fig)
-
-def plot_variability(x_orig, x_mean, x_std, epoch, lead, out_dir, attn: np.ndarray | None = None):
-    os.makedirs(out_dir, exist_ok=True)
-    t = range(x_orig.shape[0])
-    fig, (ax_sig, ax_attn) = plt.subplots(
-        2, 1, figsize=(10, 4), sharex=True, gridspec_kw={"height_ratios": [4, 1]}
-    )
-    ax_sig.plot(t, x_orig[:, lead], label="Original", alpha=0.7)
-    ax_sig.plot(t, x_mean[:, lead], label="Reconstruction", lw=2)
-    ax_sig.fill_between(
-        t,
-        x_mean[:, lead] - 2 * x_std[:, lead],
-        x_mean[:, lead] + 2 * x_std[:, lead],
-        color="gray", alpha=0.3, label="±2σ"
-    )
-    ax_sig.legend()
-    ax_sig.set_title(f"Epoch {epoch}: Lead {lead} Variability")
-    if attn is not None:
-        data = np.asarray(attn)
-        # ensure time dimension is the last axis
-        if data.ndim == 1:
-            data = data[None, :]                     # [1, T]
-        elif data.shape[0] == len(t) and data.shape[1] != len(t):
-            data = data.T                            # [H, T]
-        # draw heat‑map
-        ax_attn.imshow(data,
-                       aspect="auto",
-                       cmap="hot",
-                       extent=[0, data.shape[-1], 0, data.shape[0]])
-        ax_attn.set_yticks([])
-        ax_attn.set_xticks([])
-        for spine in ax_attn.spines.values():
-            spine.set_visible(False)
-    else:
-        ax_attn.axis("off")
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, f"epoch_{epoch:03d}_lead{lead}_var.png"))
-    plt.close(fig)
-
-def plot_full_deterministic(x_orig_full, x_mean_full, epoch, lead, out_dir,
-                            attn_full: np.ndarray | None = None):
-    """
-    Save deterministic reconstruction plot for an entire ECG lead (≈5000 time‑steps).
-    If ``attn_full`` is provided ‑‑ shape (sample_length, n_leads) ‑‑ a heat‑map strip
-    of the attention weights for the selected lead is drawn underneath.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    t = range(x_orig_full.shape[0])
-
-    # --- Two‑row layout: signal + attention strip ---
-    fig, (ax_sig, ax_attn) = plt.subplots(
-        2, 1, figsize=(12, 5), sharex=True, gridspec_kw={"height_ratios": [4, 1]}
-    )
-
-    # Signal
-    ax_sig.plot(t, x_orig_full[:, lead], label="Original", alpha=0.7)
-    ax_sig.plot(t, x_mean_full[:, lead], label="Reconstruction", lw=2)
-    ax_sig.legend()
-    ax_sig.set_title(f"Epoch {epoch}: Lead {lead} Full Signal Deterministic")
-
-    # Attention heat‑map
-    if attn_full is not None:
-        attn_row = attn_full[:, lead].T  # (sample_length,)
-        ax_attn.imshow(
-            attn_row[None, :],
-            aspect="auto",
-            cmap="hot",
-            extent=[0, len(attn_row), 0, 1]
-        )
-        ax_attn.set_yticks([])
-        ax_attn.set_xticks([])
-        for spine in ax_attn.spines.values():
-            spine.set_visible(False)
-    else:
-        ax_attn.axis("off")
-
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, f"epoch_{epoch:03d}_lead{lead}_full_det.png"))
-    plt.close(fig)
-
-def plot_full_variability(x_orig_full, x_mean_full, x_std_full, epoch, lead,
-                          out_dir, attn_full: np.ndarray | None = None):
-    """
-    Save uncertainty‑aware reconstruction plot for an entire ECG lead.
-    Adds an attention heat‑map strip if ``attn_full`` is supplied.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    t = range(x_orig_full.shape[0])
-
-    fig, (ax_sig, ax_attn) = plt.subplots(
-        2, 1, figsize=(12, 5), sharex=True, gridspec_kw={"height_ratios": [4, 1]}
-    )
-
-    # Signal + ±2σ envelope
-    ax_sig.plot(t, x_orig_full[:, lead], label="Original", alpha=0.7)
-    ax_sig.plot(t, x_mean_full[:, lead], label="Reconstruction", lw=2)
-    ax_sig.fill_between(
-        t,
-        x_mean_full[:, lead] - 2 * x_std_full[:, lead],
-        x_mean_full[:, lead] + 2 * x_std_full[:, lead],
-        color="gray", alpha=0.3, label="±2σ"
-    )
-    ax_sig.legend()
-    ax_sig.set_title(f"Epoch {epoch}: Lead {lead} Full Signal Variability")
-
-    # Attention heat‑map
-    if attn_full is not None:
-        attn_row = attn_full[:, lead].T  # (sample_length,)
-        ax_attn.imshow(
-            attn_row[None, :],
-            aspect="auto",
-            cmap="hot",
-            extent=[0, len(attn_row), 0, 1]
-        )
-        ax_attn.set_yticks([])
-        ax_attn.set_xticks([])
-        for spine in ax_attn.spines.values():
-            spine.set_visible(False)
-    else:
-        ax_attn.axis("off")
-
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, f"epoch_{epoch:03d}_lead{lead}_full_var.png"))
-    plt.close(fig)
-    
-def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
-                        out_dir_det, out_dir_var,
-                        attn_full: np.ndarray | None = None,
-                        saliency_full: np.ndarray | None = None):
-    """
-    Plot all 12 leads for a full-length sample (≈5000 time‑steps) in stacked subplots,
-    with a red attention heat‑map strip under each lead.
-
-    Parameters
-    ----------
-    x_orig_full : (T, 12) ndarray
-        Original ECG.
-    x_mean_full : (T, 12) ndarray
-        Reconstruction mean from the VAE.
-    x_std_full  : (T, 12) ndarray
-        Reconstruction σ (standard deviation).
-    epoch : int
-        Current epoch (for filename / title).
-    out_dir_det : str
-        Folder to save the deterministic figure.
-    out_dir_var : str
-        Folder to save the variability figure.
-    attn_full : (T, 12) ndarray or None
-        Lead‑wise attention weights already merged across windows.
-    """
-    os.makedirs(out_dir_det, exist_ok=True)
-    os.makedirs(out_dir_var, exist_ok=True)
-
-    sample_length, n_leads = x_orig_full.shape
-    t = range(sample_length)
-
-    # Guard against flat attention (vmin == vmax ⇒ imshow warning)
-    if attn_full is not None:
-        attn_min = float(attn_full.min())
-        attn_max = float(attn_full.max())
-        if abs(attn_max - attn_min) < 1e-6:
-            attn_min -= 1e-6
-            attn_max += 1e-6
-    else:
-        attn_min = attn_max = None
-
-    # Compute min/max for MSE and saliency
-    mse_full = (x_orig_full - x_mean_full) ** 2
-    mse_min, mse_max = float(mse_full.min()), float(mse_full.max())
-    if abs(mse_max - mse_min) < 1e-6:
-        mse_min -= 1e-6; mse_max += 1e-6
-
-    if saliency_full is not None:
-        sal_min, sal_max = float(saliency_full.min()), float(saliency_full.max())
-        if abs(sal_max - sal_min) < 1e-6:
-            sal_min -= 1e-6; sal_max += 1e-6
-    else:
-        sal_min = sal_max = None
-
-    def _plot_strip(ax, data_row, idx, cmap, vmin, vmax):
-        """
-        Draw a coloured strip `idx` (0=closest to signal) below the signal.
-        """
-        y_min, y_max = ax.get_ylim()
-        strip_height = 0.15 * (y_max - y_min)
-        y_top = y_min - idx * strip_height
-        y_bot = y_top - strip_height
-        ax.imshow(
-            data_row[None, :],
-            aspect="auto",
-            cmap=cmap,
-            vmin=vmin,
-            vmax=vmax,
-            extent=[0, sample_length, y_bot, y_top],
-            zorder=0
-        )
-        ax.set_ylim(y_bot, y_max)
-
-    # ---------- Deterministic ----------
-    fig, axes = plt.subplots(n_leads, 1, figsize=(14, 2.2 * n_leads), sharex=True)
-    for lead in range(n_leads):
-        axes[lead].plot(t, x_orig_full[:, lead], label="Original", alpha=0.7)
-        axes[lead].plot(t, x_mean_full[:, lead], label="Reconstruction", lw=1)
-        # Plot strips: attention, MSE, saliency (if available)
-        if attn_full is not None:
-            _plot_strip(axes[lead], attn_full[:, lead].T, idx=0,
-                        cmap="Reds", vmin=attn_min, vmax=attn_max)
-        _plot_strip(axes[lead], mse_full[:, lead].T, idx=1,
-                    cmap="Blues", vmin=mse_min, vmax=mse_max)
-        if saliency_full is not None:
-            _plot_strip(axes[lead], saliency_full[:, lead].T, idx=2,
-                        cmap="Greens", vmin=sal_min, vmax=sal_max)
-        axes[lead].set_ylabel(f"L{lead:02d}")
-        if lead == 0:
-            import matplotlib.patches as mpatches
-            patches = [
-                mpatches.Patch(color="red",   label="Attention"),
-                mpatches.Patch(color="blue",  label="MSE"),
-                mpatches.Patch(color="green", label="Saliency")
-            ]
-            axes[lead].legend(handles=patches, loc="upper right")
-    axes[-1].set_xlabel("Time")
-    fig.suptitle(f"Epoch {epoch}: Full‑sample Deterministic (All 12 leads)")
-
-    # ---------- Continuous legends ----------
-    import matplotlib as mpl
-    from matplotlib import cm
-
-    # Normalisations
-    attn_norm = mpl.colors.Normalize(vmin=attn_min, vmax=attn_max) if attn_full is not None else None
-    mse_norm  = mpl.colors.Normalize(vmin=mse_min,  vmax=mse_max)
-    sal_norm  = mpl.colors.Normalize(vmin=sal_min,  vmax=sal_max) if saliency_full is not None else None
-
-    # Axes positions (left, bottom, width, height) in figure coords
-    cbar_width = 0.015
-    cbar_height = 0.18
-    pad = 0.02
-    right_edge = 0.93   # move colour bars slightly left
-
-    if attn_full is not None:
-        cax_attn = fig.add_axes([right_edge, 0.75, cbar_width, cbar_height])
-        mpl.colorbar.ColorbarBase(cax_attn, cmap=cm.get_cmap("Reds"),
-                                  norm=attn_norm, orientation='vertical')
-        cax_attn.set_title("Attention", fontsize=8)
-
-    cax_mse = fig.add_axes([right_edge, 0.52, cbar_width, cbar_height])
-    mpl.colorbar.ColorbarBase(cax_mse, cmap=cm.get_cmap("Blues"),
-                              norm=mse_norm, orientation='vertical')
-    cax_mse.set_title("MSE", fontsize=8)
-
-    if saliency_full is not None:
-        cax_sal = fig.add_axes([right_edge, 0.29, cbar_width, cbar_height])
-        mpl.colorbar.ColorbarBase(cax_sal, cmap=cm.get_cmap("Greens"),
-                                  norm=sal_norm, orientation='vertical')
-        cax_sal.set_title("Saliency", fontsize=8)
-
-    # Slight tight‑layout again to avoid overlap with new axes
-    fig.tight_layout(rect=[0, 0, 0.91, 0.97])
-    fig.savefig(os.path.join(out_dir_det, f"epoch_{epoch:03d}_full_multilead_det.png"))
-    plt.close(fig)
-
-    # ---------- Variability ----------
-    fig, axes = plt.subplots(n_leads, 1, figsize=(14, 2.2 * n_leads), sharex=True)
-    for lead in range(n_leads):
-        axes[lead].plot(t, x_orig_full[:, lead], label="Original", alpha=0.7)
-        axes[lead].plot(t, x_mean_full[:, lead], label="Reconstruction", lw=1)
-        axes[lead].fill_between(
-            t,
-            x_mean_full[:, lead] - 2 * x_std_full[:, lead],
-            x_mean_full[:, lead] + 2 * x_std_full[:, lead],
-            color="gray", alpha=0.3
-        )
-        # Plot strips: attention, MSE, saliency (if available)
-        if attn_full is not None:
-            _plot_strip(axes[lead], attn_full[:, lead].T, idx=0,
-                        cmap="Reds", vmin=attn_min, vmax=attn_max)
-        _plot_strip(axes[lead], mse_full[:, lead].T, idx=1,
-                    cmap="Blues", vmin=mse_min, vmax=mse_max)
-        if saliency_full is not None:
-            _plot_strip(axes[lead], saliency_full[:, lead].T, idx=2,
-                        cmap="Greens", vmin=sal_min, vmax=sal_max)
-        axes[lead].set_ylabel(f"L{lead:02d}")
-        # Optionally: add legend only to deterministic plot to avoid repetition
-    axes[-1].set_xlabel("Time")
-    fig.suptitle(f"Epoch {epoch}: Full‑sample Variability (All 12 leads)")
-
-    # Re‑use the same norms
-    if attn_full is not None:
-        cax_attn_var = fig.add_axes([right_edge, 0.75, cbar_width, cbar_height])
-        mpl.colorbar.ColorbarBase(cax_attn_var, cmap=cm.get_cmap("Reds"),
-                                  norm=attn_norm, orientation='vertical')
-        cax_attn_var.set_title("Attention", fontsize=8)
-
-    cax_mse_var = fig.add_axes([right_edge, 0.52, cbar_width, cbar_height])
-    mpl.colorbar.ColorbarBase(cax_mse_var, cmap=cm.get_cmap("Blues"),
-                              norm=mse_norm, orientation='vertical')
-    cax_mse_var.set_title("MSE", fontsize=8)
-
-    if saliency_full is not None:
-        cax_sal_var = fig.add_axes([right_edge, 0.29, cbar_width, cbar_height])
-        mpl.colorbar.ColorbarBase(cax_sal_var, cmap=cm.get_cmap("Greens"),
-                                  norm=sal_norm, orientation='vertical')
-        cax_sal_var.set_title("Saliency", fontsize=8)
-
-    fig.tight_layout(rect=[0, 0, 0.91, 0.97])
-    fig.savefig(os.path.join(out_dir_var, f"epoch_{epoch:03d}_full_multilead_var.png"))
-    plt.close(fig)
 
 
 def reconstruct_full_saliency(model, dataset, device):
-    """
-    Estimate gradient‑based saliency |∂MSE/∂x| for a full‑length sample.
-    Returns tensor of shape (sample_length, n_leads) with absolute gradients.
-    """
-    # cuDNN LSTM/GRU backward fails in eval mode; temporarily switch to train()
     was_training = model.training
     if not was_training:
         model.train()
@@ -381,26 +45,22 @@ def reconstruct_full_saliency(model, dataset, device):
         model.zero_grad(set_to_none=True)
 
         x_mean, _, _, _, _, _ = model(window)
-        loss = torch.mean((x_mean - window) ** 2)  # scalar
+        loss = torch.mean((x_mean - window) ** 2)  
         loss.backward()
 
         grad_abs = window.grad.abs().squeeze(0)  # (T_window, n_leads)
         grad_sum[start:start+window_size]   += grad_abs
         grad_count[start:start+window_size] += 1
 
-        window.grad = None  # free memory
+        window.grad = None 
 
     grad_count[grad_count == 0] = 1
     saliency_full = grad_sum / grad_count
-    # Restore original mode
     if not was_training:
         model.eval()
     return saliency_full.cpu()
 
 def reconstruct_full_mean(model, dataset, device):
-    """
-    Reconstruct full-length ECG sample mean by merging window outputs.
-    """
     model.eval()
     window_size = dataset.window_size
     stride = dataset.stride
@@ -420,9 +80,6 @@ def reconstruct_full_mean(model, dataset, device):
     return recon_full.cpu()
 
 def reconstruct_full_std(model, dataset, device):
-    """
-    Reconstruct full-length ECG sample standard deviation by merging window sigma outputs.
-    """
     model.eval()
     window_size = dataset.window_size
     stride = dataset.stride
@@ -441,12 +98,7 @@ def reconstruct_full_std(model, dataset, device):
     recon_full_std = recon_sum / recon_count
     return recon_full_std.cpu()
 
-# Inserted function: reconstruct_full_attn
 def reconstruct_full_attn(model, dataset, device):
-    """
-    Reconstruct (merge) lead‑wise attention weights for a full‑length ECG sample.
-    Returns tensor of shape (sample_length, n_leads).
-    """
     model.eval()
     window_size  = dataset.window_size
     stride       = dataset.stride
@@ -457,7 +109,6 @@ def reconstruct_full_attn(model, dataset, device):
     with torch.no_grad():
         for (file_idx, start) in dataset.indexes:
             window = dataset.base[file_idx][start:start+window_size].unsqueeze(0).to(device)
-            # model returns: x_mean, x_logvar, mu, logvar, A_weights, lead_w
             _, _, _, _, _, lead_w = model(window)
             lead_w = lead_w.squeeze(0)  # (T_window, n_leads)
             attn_sum[start:start+window_size]   += lead_w
@@ -527,7 +178,7 @@ def validate_epoch(model, dataloader, device):
     return avg_loss, avg_recon, avg_kl
 
 def main():
-    DATA_DIR = "/fhome/mgarreta/ENTREGA/preprocessed_mimic"
+    DATA_DIR = ROOT / "data" / "processed"
     WINDOW_SIZE  = 500
     STRIDE       = 125
     SAMPLE_LENGTH = 5000   
@@ -539,17 +190,17 @@ def main():
     RAMP_RATIO   = 0.5  # portion (0‑1) of each cycle used for a linear ramp‑up
     MAX_BETA     = 0.3  # upper bound for β during training
 
-    OUT_DIR_DETERMINISTIC = "/fhome/mgarreta/VAE/plot/VAE_BiLSTM_CyclicalAnn_ATT_32latentBIG/plot_det"
-    OUT_DIR_VARIABILITY   = "/fhome/mgarreta/VAE/plot/VAE_BiLSTM_CyclicalAnn_ATT_32latentBIG/plot_var"
-    MODEL_DIR = "/fhome/mgarreta/VAE/models/VAE_BiLSTM_CyclicalAnn_ATT_32latentBIG"
-    os.makedirs(OUT_DIR_DETERMINISTIC, exist_ok=True)
-    os.makedirs(OUT_DIR_VARIABILITY, exist_ok=True)
-    os.makedirs(MODEL_DIR, exist_ok=True)
+    OUT_DIR_DETERMINISTIC = ROOT / "outputs" / "plot_det"
+    OUT_DIR_VARIABILITY   = ROOT / "outputs" / "plot_var"
+    MODEL_DIR             = ROOT / "models" / "VAE"
+    os.makedirs(str(OUT_DIR_DETERMINISTIC), exist_ok=True)
+    os.makedirs(str(OUT_DIR_VARIABILITY), exist_ok=True)
+    os.makedirs(str(MODEL_DIR), exist_ok=True)
 
     best_val_loss = float('inf')
 
     full_ds = WindowDataset(
-        npy_folder=DATA_DIR,
+        npy_folder=str(DATA_DIR),
         window_size=WINDOW_SIZE,
         stride=STRIDE,
         sample_length=SAMPLE_LENGTH
@@ -640,13 +291,13 @@ def main():
         scheduler.step(val_loss)
 
         # Save model for this epoch
-        epoch_model_path = os.path.join(MODEL_DIR, f"model_epoch_{epoch:03d}.pt")
+        epoch_model_path = os.path.join(str(MODEL_DIR), f"model_epoch_{epoch:03d}.pt")
         torch.save(model.state_dict(), epoch_model_path)
 
         # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_model_path = os.path.join(MODEL_DIR, "best_model.pt")
+            best_model_path = os.path.join(str(MODEL_DIR), "best_model.pt")
             torch.save(model.state_dict(), best_model_path)
 
         print(f"Epoch {epoch:03d} → "
@@ -657,65 +308,5 @@ def main():
               f"LR={optimizer.param_groups[0]['lr']:.6f} | "
               f"Beta={model.beta:.4f}")
 
-        # Plot example reconstructions after validation
-        # Grab one batch from validation
-        x_batch = next(iter(val_loader)).cpu()  # shape (B, T, n_leads)
-        x_val = x_batch[0]  # first window
-        # Run through model
-        x_mean, x_logvar, _, _, _, _ = model(x_batch.to(device))
-        x_mean = x_mean[0].detach().cpu().numpy()  # (T, n_leads)
-        x_std  = torch.exp(0.5 * x_logvar[0]).detach().cpu().numpy()  # (T, n_leads)
-        # Plot lead 0 by default
-        lead_idx = 0
-        # Compute attention weights for visualization
-        x_mean_, x_logvar_, _, _, _, attn_weights = model(x_batch.to(device))
-        attn = attn_weights[0].detach().cpu().numpy()  # (T, n_leads)
-        plot_deterministic(
-            x_val.detach().numpy(), x_mean, epoch, lead_idx, OUT_DIR_DETERMINISTIC, attn[:, lead_idx]
-        )
-        plot_variability(
-            x_val.detach().numpy(), x_mean, x_std, epoch, lead_idx, OUT_DIR_VARIABILITY, attn[:, lead_idx]
-        )
-
-        # Reconstruct and save full sample from first file
-        first_file_ds = WindowDataset(
-            npy_folder=DATA_DIR,
-            window_size=WINDOW_SIZE,
-            stride=STRIDE,
-            sample_length=SAMPLE_LENGTH
-        )
-        # Filter to only windows from the first file (file_idx = 0)
-        first_file_ds.indexes = [(file_idx, start) for (file_idx, start) in first_file_ds.indexes if file_idx == 0]
-        recon_full = reconstruct_full_mean(model, first_file_ds, device)  # (5000, 12)
-        out_path = os.path.join(OUT_DIR_DETERMINISTIC, "full_reconstruction.npy")
-        np.save(out_path, recon_full.numpy())
-
-        # Reconstruct full attention map
-        attn_full = reconstruct_full_attn(model, first_file_ds, device)  # (5000, 12)
-        np.save(os.path.join(OUT_DIR_DETERMINISTIC, "full_attention.npy"), attn_full.numpy())
-
-        # Reconstruct saliency map
-        saliency_full = reconstruct_full_saliency(model, first_file_ds, device)  # (5000,12)
-        np.save(os.path.join(OUT_DIR_DETERMINISTIC, "full_saliency.npy"), saliency_full.numpy())
-
-        # Also reconstruct and save full sigma map
-        recon_full_std = reconstruct_full_std(model, first_file_ds, device)  # (5000, 12)
-        out_std = os.path.join(OUT_DIR_VARIABILITY, "full_reconstruction_std.npy")
-        np.save(out_std, recon_full_std.numpy())
-
-        # ----- Multi‑lead visualisation -----
-        orig_full = first_file_ds.base[0].numpy()  # (5000, 12)
-        # Plot each lead with its own attention strip in stacked subplots
-        plot_full_multilead(
-            orig_full,
-            recon_full.numpy(),
-            recon_full_std.numpy(),
-            epoch,
-            OUT_DIR_DETERMINISTIC,
-            OUT_DIR_VARIABILITY,
-            attn_full.numpy(),
-            saliency_full.numpy()
-        )
-        
 if __name__ == "__main__":
     main()
