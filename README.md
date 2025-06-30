@@ -67,7 +67,7 @@ python pre-process.py --dataset ptbxl --input-dir {path_of_ptb-xl-a-large-public
 
 # training
 cd src
-python training.py --dataset [ptbxl or mimic]
+python training.py --dataset [ptbxl or mimic or both]
 
 # evaluation (to evaluate using quantitative metrics)
 cd src
