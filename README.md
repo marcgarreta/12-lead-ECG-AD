@@ -61,6 +61,7 @@ For each lead, the interface provides:
 - A point-wise reconstruction error (MSE) color bar.
 
 This setup enables users to not only detect anomalies but also interpret when and where they occur within the ECG signal.
+
 ![User Interface Example](img/dashboard/DASHBOARD-2.png)
 
 ---
