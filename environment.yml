@@ -10,16 +10,16 @@ dependencies:
   - scipy
   - scikit-learn
   - pytorch
-  - torchvision  # if you need image utilities; can omit if unused
-  - cudatoolkit=11.7  # or your local CUDA version; omit if CPU-only
+  - torchvision  
+  - cudatoolkit=11.7  
   - matplotlib
   - seaborn
   - tqdm
   - wfdb
-  - scikit-image  # for any additional signal/image needs
+  - scikit-image  
   - pip
   - pip:
       - dash
       - plotly
-      - windows-curses  # if using dash in Windows terminal
-      - wfdb      # also available via pip on some platforms
+      - windows-curses  # just if using dash in Windows terminal
+      - wfdb      
