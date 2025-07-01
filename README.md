@@ -18,7 +18,7 @@ In addition to modeling, the project also includes an interactive **dashboard** 
 
 This code is part of my **Final Degree Project in Artificial Intelligence** (Universitat Autònoma de Barcelona, Escola d’Enginyeria).
 
-* **Author:** Marc Garreta Basora -- [@marcgarreta](https://github.com/marcgarreta)
+* **Author:** Marc Garreta Basora – [@marcgarreta](https://github.com/marcgarreta)
 * **Supervisor:** Dr. Mehmet Oguz Mulayim – [@omulayim](https://github.com/omulayim)  
 * **Report:** see `/docs/final_report.pdf` for the final report.
 * **TFG Title:** _Anomaly Detection in Patient Vital Signs for Early Warning of Critical Health Events_
