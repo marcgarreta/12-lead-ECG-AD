@@ -18,7 +18,7 @@ This code is part of my **Final Degree Project in Artificial Intelligence** (Uni
 
 * **Author:** Marc Garreta Basora  
 * **Supervisor:** Dr. Mehmet Oguz Mulayim – [@omulayim](https://github.com/omulayim)  
-* **Report:** see `/docs/final_report.pdf` for a full technical write-up.
+* **Report:** see `/docs/final_report.pdf` for the final report.
 
 ---
 
