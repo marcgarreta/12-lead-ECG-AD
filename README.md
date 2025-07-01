@@ -21,6 +21,7 @@ This code is part of my **Final Degree Project in Artificial Intelligence** (Uni
 * **Author:** Marc Garreta Basora  
 * **Supervisor:** Dr. Mehmet Oguz Mulayim – [@omulayim](https://github.com/omulayim)  
 * **Report:** see `/docs/final_report.pdf` for the final report.
+* **TFG Title:** _Anomaly Detection in Patient Vital Signs for Early Warning of Critical Health Events_
 
 ---
 
