@@ -2,7 +2,13 @@
 
 ## About
 
-Unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs) using three autoencoder-based models (Convolutional Autoencoder, Variational Autoencoder, Variational Autoencoder with Multi-Head Attention) plus an interactive Dash dashboard for interpretable results.
+This project focuses on the **unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs)** autoencoder-based architectures. It explores and compares three models:
+
+- **Convolutional Autoencoder (CAE)**  
+- **Variational Autoencoder (VAE)**  
+- **Variational Autoencoder with Multi-Head Attention (VAE-MHA)**  
+
+In addition to modeling, the project also includes an interactive **dashboard** designed for **interpretable visualization** of the results. This web application allows users to analyze ECG signals and interpret possible anomalous patterns within a user-friendly environment.
 
 ---
 
@@ -16,16 +22,21 @@ This code accompanies my **Final Degree Project in Artificial Intelligence** (Un
 
 ---
 
-## Models
+## Model Architectures
 
-CAE: A lightweight convolutional autoencoder that flags anomalies purely via reconstruction error on raw ECG waveforms
+### CAE
+A lightweight convolutional autoencoder that detects anomalies via reconstruction error on raw ECG signals. The architecture is inspired from the convolutional structure presented by Zhang et al. [1].
+
 ![Convolutional Autoencoder](img/model_architecture/CAE_arch.png)
 
-VAE-BiLSTM: A bidirectional LSTM VAE that captures global ECG deviations without any attention mechanisms.
-![Variational Autoencoder with Bidirectional Long Short-Term Memory](img/model_architecture/VAE_arc-2.png)
-A bidirectional LSTM VAE that captures global ECG deviations without any attention mechanisms.
+### VAE-BiLSTM
+A bidirectional LSTM-based variational autoencoder that captures global ECG deviations without attention mechanisms. This model is primarily inspired by the anomaly detection approach (OmniAnomaly) of Fu et al. [3], with theoretical foundations based on the variational inference concepts introduced by Kingma and Welling [2].
 
-VAE-BiLSTM-MHA: A variational autoencoder with both lead-wise and temporal multi-head attention for pinpointing when and where anomalies occur (Novel approach) 
+![Variational Autoencoder with Bidirectional Long Short-Term Memory](img/model_architecture/VAE_arc-2.png)
+
+### VAE-BiLSTM-MHA
+A variational autoencoder enhanced with both lead-wise and temporal multi-head attention for highlighting when and where anomalies occur. This novel approach is inspired by the architecture proposed by Correia et al. [4], which applies a similar structure for anomaly detection in multivariate time-series data, although in a different data domain than ECG signals.
+
 ![Variational Autoencoder with Bidirectional Long Short-Term Memory with Multi-Head Attention](img/model_architecture/MAVAE.png)
 
 ---
@@ -36,7 +47,7 @@ VAE-BiLSTM-MHA: A variational autoencoder with both lead-wise and temporal multi
 ---
 
 ## Results
-![Results](img/results/resul1)
+![Results](img/results/evaluation_metrics_1.png)
 
 ---
 
@@ -81,9 +92,20 @@ python visualization_cae.py #if you want to plot the cae visualizations
 python visualization_vae.py #if you want to plot the vae visualizations
 
 # ui (to run the local web application)
-src ui
+cd ui
 python app.py 
-´´´
+``` 
+
 ---
 
-##REFERENCES
+## References
+
+1. T. Zhang, Y. Zhang, B. Zhang, H. Zhou, Q. Xu, Y. Zhang, and C. Xu, *Unsupervised Deep Anomaly Detection for Multi-Sensor Time-Series Signals*, arXiv preprint arXiv:2107.12626, 2021. [Online]. Available: [https://arxiv.org/abs/2107.12626](https://arxiv.org/abs/2107.12626)
+
+2. D. P. Kingma and M. Welling, *Auto-encoding variational Bayes*, arXiv preprint arXiv:1312.6114, 2013. [Online]. Available: [https://arxiv.org/abs/1312.6114](https://arxiv.org/abs/1312.6114)
+
+3. C. Fu, D. Zhang, P. Huang, S. Liu, Y. Qiao, and H. Xu, *Robust Anomaly Detection for Multivariate Time Series via Generative Adversarial Networks*, in *Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining (KDD '19)*, 2019, pp. 2828–2837.
+
+4. L. Correia, J.-C. Goos, P. Klein, T. Bäck, and A. V. Kononova, *MA-VAE: Multi-head Attention-based Variational Autoencoder for Anomaly Detection in Multivariate Time Series*, arXiv preprint arXiv:2309.02253, 2023. [Online]. Available: [https://arxiv.org/abs/2309.02253](https://arxiv.org/abs/2309.02253)
+
+---
