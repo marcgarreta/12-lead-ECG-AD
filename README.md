@@ -1,8 +1,10 @@
 # 12-Lead ECG Anomaly Detection
 
+This repository provides all the necessary material, including the final report and its progress reports, as well as code for model training, evaluation, visualization, and dashboard usage.
+
 ## About
 
-This project focuses on the **unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs)** autoencoder-based architectures. It explores and compares three models:
+The project focuses on the **unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs)** autoencoder-based architectures. It explores and compares three models:
 
 - **Convolutional Autoencoder (CAE)**  
 - **Variational Autoencoder (VAE)**  
