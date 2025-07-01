@@ -14,7 +14,7 @@ In addition to modeling, the project also includes an interactive **dashboard** 
 
 ## Academic context
 
-This code accompanies my **Final Degree Project in Artificial Intelligence** (Universitat Autònoma de Barcelona, Escola d’Enginyeria).
+This code is part of my **Final Degree Project in Artificial Intelligence** (Universitat Autònoma de Barcelona, Escola d’Enginyeria).
 
 * **Author:** Marc Garreta Basora  
 * **Supervisor:** Dr. Mehmet Oguz Mulayim – [@omulayim](https://github.com/omulayim)  
