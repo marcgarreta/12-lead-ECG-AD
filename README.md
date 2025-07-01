@@ -42,6 +42,25 @@ A variational autoencoder enhanced with both lead-wise and temporal multi-head a
 ---
 
 ## Dashboard
+This user-friendly web application allow users to:
+
+- Upload ECG signals in standard formats (`.npy` or `.dat/.hea`).
+- Select between different models for analysis:
+  - **Convolutional Autoencoder (CAE)**
+  - **VAE-BiLSTM-MHA** 
+- Visualize the full 12-lead ECG with anomaly detection results.
+- Adjust configuration options, such as:
+  - Choosing specific leads to visualize.
+  - Modifying the anomaly threshold *(not recommended, as it is precomputed during model validation)*.
+
+For each lead, the interface provides:
+
+- The original signal (black) vs. reconstructed signal (red).
+- The anomaly score (orange).
+- A lead-wise attention heat-map
+- A point-wise reconstruction error (MSE) color bar.
+
+This setup enables users to not only detect anomalies but also interpret when and where they occur within the ECG signal.
 ![User Interface Example](img/dashboard/DASHBOARD-2.png)
 
 ---
