@@ -16,20 +16,25 @@ This code accompanies my **Final Degree Project in Artificial Intelligence** (Un
 
 ## Models
 
-(Hablar de models 
-(que hace cada modelo (sintetico))
-(decir que VAE BILSTM MHA es novel)
-(poner arquitectura, y enlazar con report para más detalles) 
+CAE: A lightweight convolutional autoencoder that flags anomalies purely via reconstruction error on raw ECG waveforms
+![Convolutional Autoencoder](img/model_architecture/CAE_arch.png)
+
+VAE-BiLSTM: A bidirectional LSTM VAE that captures global ECG deviations without any attention mechanisms.
+![Variational Autoencoder with Bidirectional Long Short-Term Memory](img/model_architecture/VAE_arc-2.png)
+A bidirectional LSTM VAE that captures global ECG deviations without any attention mechanisms.
+
+VAE-BiLSTM-MHA: A variational autoencoder with both lead-wise and temporal multi-head attention for pinpointing when and where anomalies occur (Novel approach) 
+![Variational Autoencoder with Bidirectional Long Short-Term Memory with Multi-Head Attention](img/model_architecture/MAVAE.png)
 
 ---
 
 ## Dashboard
-![User Interface Example](img/dashboard/DASHBOARD.png)
+![User Interface Example](img/dashboard/DASHBOARD-2.png)
 
 ---
 
 ## Results
-![Results](img/results/evaluation_metrics.png)
+![Results](img/results/resul1)
 
 ---
 
@@ -69,15 +74,11 @@ python pre-process.py --dataset ptbxl --input-dir {path_of_ptb-xl-a-large-public
 cd src
 python training.py --dataset [ptbxl or mimic or both]
 
-# evaluation (to evaluate using quantitative metrics)
-cd src
-python evaluation_metrics.py
-
 # visualization (to visualize defined samples from the test set)
 python visualization_cae.py #if you want to plot the cae visualizations
 python visualization_vae.py #if you want to plot the vae visualizations
 
-# ui (to run the local web application
+# ui (to run the local web application)
 src ui
 python app.py 
 ´´´
