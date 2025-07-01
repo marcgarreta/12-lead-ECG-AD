@@ -7,5 +7,4 @@ This folder contains the different versions of the project reports:
   - `progress_report.pdf` – Progress report.
 
 - **progress_report.pdf**  
-  Final, consolidated project report.
 
