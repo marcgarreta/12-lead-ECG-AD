@@ -1,7 +1,7 @@
 import torch 
 from torch.utils.data import Dataset
 import numpy as np
-from dataset import ECGDataset
+from .dataset import ECGDataset
 
 # WindowDataset class for creating overlapping windows from ECG signals (e.g. from (12, 5000) to (12, 500))
 # A lead (5000 data points) is split into multiple windows (size 500 and stride 250 = 19 windows per lead)

@@ -13,8 +13,10 @@ from sklearn.model_selection import train_test_split
 import random
 import matplotlib.pyplot as plt
 from torch.cuda.amp import autocast, GradScaler
-from data.dataset import WindowDataset  
+from data_processing.window_dataset import WindowDataset  
 from models.vae_bilstm_attention import VAE  
+from models.cae import CAE
+import argparse
 
 def cyclical_annealing_beta(epoch: int,
                             cycle_period: int = 10,
@@ -26,8 +28,6 @@ def cyclical_annealing_beta(epoch: int,
         return max_beta * (cycle_epoch + 1) / ramp_epochs
     else:
         return max_beta
-
-
 
 def reconstruct_full_saliency(model, dataset, device):
     was_training = model.training
@@ -117,7 +117,7 @@ def reconstruct_full_attn(model, dataset, device):
     attn_full = attn_sum / attn_count
     return attn_full.cpu()
     
-def train_epoch(model, dataloader, optimizer, device):
+def train_epoch(model, dataloader, optimizer, device, args):
     model.train()
     total_loss = 0.0
     total_recon = 0.0
@@ -128,11 +128,16 @@ def train_epoch(model, dataloader, optimizer, device):
         x = x.to(device)
         optimizer.zero_grad()
 
-        # Forward pass through our vectorized VAE
-        x_mean, x_logvar, mu, logvar, _, _ = model(x)
-
-        # Compute loss (MSE + beta * KL)
-        loss, recon_loss, kl_loss = model.loss_function(x, x_mean, x_logvar, mu, logvar)
+        if args.model == 'vae':
+            x_mean, x_logvar, mu, logvar, _, _ = model(x)
+            loss, recon_loss, kl_loss = model.loss_function(x, x_mean, x_logvar, mu, logvar)
+        else:  # cae
+            x_recon = model(x.transpose(1, 2))  # CAE expects [B, C, L]
+            x = x.transpose(1, 2)
+            loss_fn = torch.nn.MSELoss()
+            loss = loss_fn(x_recon, x)
+            recon_loss = loss
+            kl_loss = 0.0
 
         # Backward & optimize
         loss.backward()
@@ -143,7 +148,7 @@ def train_epoch(model, dataloader, optimizer, device):
         batch_size = x.size(0)
         total_loss  += loss.item()       * batch_size
         total_recon += recon_loss.item() * batch_size
-        total_kl    += kl_loss.item()    * batch_size
+        total_kl    += kl_loss if isinstance(kl_loss, float) else kl_loss.item() * batch_size
 
     # Average over all windows
     n_samples = len(dataloader.dataset)
@@ -153,7 +158,7 @@ def train_epoch(model, dataloader, optimizer, device):
 
     return avg_loss, avg_recon, avg_kl
 
-def validate_epoch(model, dataloader, device):
+def validate_epoch(model, dataloader, device, args):
     model.eval()
     total_loss = 0.0
     total_recon = 0.0
@@ -162,13 +167,21 @@ def validate_epoch(model, dataloader, device):
     with torch.no_grad():
         for x in tqdm(dataloader, desc="Validate"):
             x = x.to(device)
-            x_mean, x_logvar, mu, logvar, _, _ = model(x)
-            loss, recon_loss, kl_loss = model.loss_function(x, x_mean, x_logvar, mu, logvar)
+            if args.model == 'vae':
+                x_mean, x_logvar, mu, logvar, _, _ = model(x)
+                loss, recon_loss, kl_loss = model.loss_function(x, x_mean, x_logvar, mu, logvar)
+            else:  # cae
+                x_recon = model(x.transpose(1, 2))
+                x = x.transpose(1, 2)
+                loss_fn = torch.nn.MSELoss()
+                loss = loss_fn(x_recon, x)
+                recon_loss = loss
+                kl_loss = 0.0
 
             batch_size = x.size(0)
             total_loss  += loss.item()       * batch_size
             total_recon += recon_loss.item() * batch_size
-            total_kl    += kl_loss.item()    * batch_size
+            total_kl    += kl_loss if isinstance(kl_loss, float) else kl_loss.item() * batch_size
 
     n_samples = len(dataloader.dataset)
     avg_loss  = total_loss  / n_samples
@@ -178,33 +191,60 @@ def validate_epoch(model, dataloader, device):
     return avg_loss, avg_recon, avg_kl
 
 def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--model', type=str, choices=['vae', 'cae'], default='vae', help='Model to train: vae or cae')
+    p.add_argument('--dataset', type=str, choices=['ptbxl', 'mimic', 'both'], default='ptbxl', help='Dataset to train on: ptbxl, mimic, or both')
+    args = p.parse_args()
+
     DATA_DIR = ROOT / "data" / "processed"
     WINDOW_SIZE  = 500
     STRIDE       = 125
     SAMPLE_LENGTH = 5000   
 
-
     num_epochs = 100
 
-    CYCLE_PERIOD = 10   # epochs that form one full cycle
-    RAMP_RATIO   = 0.5  # portion (0‑1) of each cycle used for a linear ramp‑up
-    MAX_BETA     = 0.3  # upper bound for β during training
+    # KL annaeling parameters
+    CYCLE_PERIOD = 10   # full cycle length
+    RAMP_RATIO   = 0.5  # ramp ration 
+    MAX_BETA     = 0.3  # maximum beta value
 
     OUT_DIR_DETERMINISTIC = ROOT / "outputs" / "plot_det"
     OUT_DIR_VARIABILITY   = ROOT / "outputs" / "plot_var"
-    MODEL_DIR             = ROOT / "models" / "VAE"
+    if args.model == 'vae':
+        MODEL_DIR = ROOT / "src" / "weights" / "VAE_weights"
+    elif args.model == 'cae':
+        MODEL_DIR = ROOT / "src" / "weights" / "CAE_weights"
     os.makedirs(str(OUT_DIR_DETERMINISTIC), exist_ok=True)
     os.makedirs(str(OUT_DIR_VARIABILITY), exist_ok=True)
     os.makedirs(str(MODEL_DIR), exist_ok=True)
 
     best_val_loss = float('inf')
 
-    full_ds = WindowDataset(
-        npy_folder=str(DATA_DIR),
-        window_size=WINDOW_SIZE,
-        stride=STRIDE,
-        sample_length=SAMPLE_LENGTH
-    )
+    if args.dataset == 'ptbxl':
+        full_ds = WindowDataset(
+            ptbxl_dir=str(DATA_DIR / "ptbxl"),
+            dataset='ptbxl',
+            window_size=WINDOW_SIZE,
+            stride=STRIDE,
+            sample_length=SAMPLE_LENGTH
+        )
+    elif args.dataset == 'mimic':
+        full_ds = WindowDataset(
+            mimic_dir=str(DATA_DIR / "mimic"),
+            dataset='mimic',
+            window_size=WINDOW_SIZE,
+            stride=STRIDE,
+            sample_length=SAMPLE_LENGTH
+        )
+    elif args.dataset == 'both':
+        full_ds = WindowDataset(
+            ptbxl_dir=str(DATA_DIR / "ptbxl"),
+            mimic_dir=str(DATA_DIR / "mimic"),
+            dataset='both',
+            window_size=WINDOW_SIZE,
+            stride=STRIDE,
+            sample_length=SAMPLE_LENGTH
+        )
 
     indices   = list(range(len(full_ds)))
     train_idx, val_idx = train_test_split(
@@ -214,8 +254,8 @@ def main():
         shuffle=True
     )
     # Set to None to use the whole dataset
-    REDUCE_TRAIN = 1000000
-    REDUCE_VAL   = 5000
+    REDUCE_TRAIN = 20000
+    REDUCE_VAL   = 2000
 
     if REDUCE_TRAIN is not None:
         train_idx = random.sample(train_idx, min(REDUCE_TRAIN, len(train_idx)))
@@ -244,8 +284,11 @@ def main():
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = VAE(n_leads=12, n_latent=32).to(device)
-    # Adjusted learning rate
+    if args.model == 'vae':
+        model = VAE(n_leads=12, n_latent=32).to(device)
+    elif args.model == 'cae':
+        model = CAE(in_channels=12).to(device)
+
     learning_rate = 5e-4
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
@@ -254,39 +297,44 @@ def main():
         # Cyclical β‑annealing
         model.beta = cyclical_annealing_beta(epoch, CYCLE_PERIOD, RAMP_RATIO, MAX_BETA)
 
-        train_loss, train_recon, train_kl = train_epoch(model, train_loader, optimizer, device)
-        val_loss, val_recon, val_kl = validate_epoch(model, val_loader, device)
+        train_loss, train_recon, train_kl = train_epoch(model, train_loader, optimizer, device, args)
+        val_loss, val_recon, val_kl = validate_epoch(model, val_loader, device, args)
 
         # Compute KL/recon ratios
         train_ratio = train_kl / train_recon if train_recon > 0 else float('inf')
         val_ratio   = val_kl   / val_recon   if val_recon   > 0 else float('inf')
 
-        # Inspect posterior statistics on validation data
-        with torch.no_grad():
-            all_mu = []
-            all_logvar = []
-            for x in val_loader:
-                x = x.to(device)
-                x_mean, x_logvar, mu, logvar, _, _ = model(x)
-                # mu, logvar: (B, T, D)
-                B, T, D = mu.shape
-                all_mu.append(mu.reshape(B * T, D).cpu())
-                all_logvar.append(logvar.reshape(B * T, D).cpu())
-            all_mu = torch.cat(all_mu, dim=0)           # (N, D)
-            all_logvar = torch.cat(all_logvar, dim=0)   # (N, D)
-            post_var = all_logvar.exp().mean(dim=0)     # average posterior variance per dim
-            mean_mu  = all_mu.mean(dim=0)               # average posterior mean per dim
+        if args.model == 'vae':
+            with torch.no_grad():
+                all_mu = []
+                all_logvar = []
+                for x in val_loader:
+                    x = x.to(device)
+                    x_mean, x_logvar, mu, logvar, _, _ = model(x)
+                    # mu, logvar: (B, T, D)
+                    B, T, D = mu.shape
+                    all_mu.append(mu.reshape(B * T, D).cpu())
+                    all_logvar.append(logvar.reshape(B * T, D).cpu())
+                all_mu = torch.cat(all_mu, dim=0)          
+                all_logvar = torch.cat(all_logvar, dim=0) 
+                post_var = all_logvar.exp().mean(dim=0)    
+                mean_mu  = all_mu.mean(dim=0)              
 
-            # Compute per-dimension KL on validation set
-            kl_per = -0.5 * (1 + all_logvar - all_mu.pow(2) - all_logvar.exp())  # (N, D)
-            kl_per_dim = kl_per.mean(dim=0)  # (D,)
-            low_kl_dims = (kl_per_dim < 1e-3).sum().item()
-            total_dims = kl_per_dim.numel()
+                # Compute per-dimension KL on validation set
+                kl_per = -0.5 * (1 + all_logvar - all_mu.pow(2) - all_logvar.exp())  # (N, D)
+                kl_per_dim = kl_per.mean(dim=0)  # (D,)
+                low_kl_dims = (kl_per_dim < 1e-3).sum().item()
+                total_dims = kl_per_dim.numel()
 
-        # Print per-dimension posterior variance and KL
-        print(f"Epoch {epoch:03d} per-dim posterior variance: {post_var.tolist()}")
-        print(f"Epoch {epoch:03d} per-dim posterior mean: {mean_mu.tolist()}")
-        print(f"Epoch {epoch:03d} per-dim KL: {kl_per_dim.tolist()}")
+            # Print per-dimension posterior variance and KL
+            print(f"Epoch {epoch:03d} per-dim posterior variance: {post_var.tolist()}")
+            print(f"Epoch {epoch:03d} per-dim posterior mean: {mean_mu.tolist()}")
+            print(f"Epoch {epoch:03d} per-dim KL: {kl_per_dim.tolist()}")
+        else:
+            low_kl_dims = 0
+            total_dims = 0
+            post_var = torch.tensor(float('nan'))
+            mean_mu = torch.tensor(float('nan'))
 
         scheduler.step(val_loss)
 
@@ -300,13 +348,16 @@ def main():
             best_model_path = os.path.join(str(MODEL_DIR), "best_model.pt")
             torch.save(model.state_dict(), best_model_path)
 
-        print(f"Epoch {epoch:03d} → "
-              f"Train NLL={train_recon:.4f}, Train KL={train_kl:.4f}, KL/NLL={train_ratio:.2f} | "
-              f"Val NLL={val_recon:.4f}, Val KL={val_kl:.4f}, KL/NLL={val_ratio:.2f} | "
-              f"Low-KL dims={low_kl_dims}/{total_dims} | "
-              f"Posterior Var (mean dim)={post_var.mean():.4f}, Posterior Mu Var={mean_mu.var():.4f} | "
-              f"LR={optimizer.param_groups[0]['lr']:.6f} | "
-              f"Beta={model.beta:.4f}")
+        if args.model == 'vae':
+            print(f"Epoch {epoch:03d} → "
+                  f"Train NLL={train_recon:.4f}, Train KL={train_kl:.4f}, KL/NLL={train_ratio:.2f} | "
+                  f"Val NLL={val_recon:.4f}, Val KL={val_kl:.4f}, KL/NLL={val_ratio:.2f} | "
+                  f"Low-KL dims={low_kl_dims}/{total_dims} | "
+                  f"Posterior Var (mean dim)={post_var.mean() if not torch.isnan(post_var).all() else float('nan'):.4f}, Posterior Mu Var={mean_mu.var() if not torch.isnan(mean_mu).all() else float('nan'):.4f} | "
+                  f"LR={optimizer.param_groups[0]['lr']:.6f} | "
+                  f"Beta={model.beta:.4f}")
+        else:  # cae
+            print(f"Epoch {epoch:03d} → " f"Train MSE={train_recon:.4f} ->" f"Val MSE={val_recon:.4f}")
 
 if __name__ == "__main__":
     main()

@@ -176,16 +176,6 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
     else:
         sal_min = sal_max = None
 
-    # Compute min/max for original signal
-    sig_min = float(np.nanmin(x_orig_full))
-    sig_max = float(np.nanmax(x_orig_full))
-    if not np.isfinite(sig_min) or not np.isfinite(sig_max):
-        sig_min, sig_max = 0.0, 0.0
-    # Include 2 std deviations for variance plot
-    rec_min = float((x_mean_full - 2*x_std_full).min())
-    rec_max = float((x_mean_full + 2*x_std_full).max())
-    sig_min = min(sig_min, rec_min)
-    sig_max = max(sig_max, rec_max)
     fig = plt.figure(figsize=(14, 6 * n_leads), constrained_layout=True)
     gs = gridspec.GridSpec(n_leads * 4, 1,
                            height_ratios=[8,8,2,2] * n_leads,
@@ -213,7 +203,16 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
                          x_mean_full[:, i] - 2*x_std_full[:, i],
                          x_mean_full[:, i] + 2*x_std_full[:, i],
                          color='C1', alpha=0.3)
-        ax0.set_ylim(sig_min, sig_max)
+        # Per-lead y-axis scaling
+        lead_min = float(np.nanmin(x_orig_full[:, i]))
+        lead_max = float(np.nanmax(x_orig_full[:, i]))
+        rec_min = float(np.nanmin(x_mean_full[:, i] - 2*x_std_full[:, i]))
+        rec_max = float(np.nanmax(x_mean_full[:, i] + 2*x_std_full[:, i]))
+        ymin = min(lead_min, rec_min)
+        ymax = max(lead_max, rec_max)
+        if not np.isfinite(ymin) or not np.isfinite(ymax) or abs(ymax - ymin) < 1e-6:
+            ymin, ymax = -1, 1
+        ax0.set_ylim(ymin, ymax)
         ax0.set_ylabel(f'Lead {i+1}', labelpad=8)
         if i == 0:
             ax0.legend(['Original','Recon'], loc='upper right', fontsize='small')
@@ -306,7 +305,10 @@ def main(args):
         cpsc_df = pd.read_csv(args.cpsc_csv)
         cpsc_df['path'] = cpsc_df['Recording'].astype(str).apply(
             lambda r: os.path.join(args.cpsc_dir, f"{r}.npy"))
+        initial_count = len(cpsc_df)
         cpsc_df = cpsc_df[cpsc_df.path.map(os.path.exists)]
+        valid_count = len(cpsc_df)
+
         samples = [(row['path'], int(row['label']), row['Recording'])
                    for _, row in cpsc_df.iterrows()]
         if args.cpsc_max_samples is not None:
@@ -333,7 +335,6 @@ def main(args):
         if sig.ndim == 2 and sig.shape[0] != 12 and sig.shape[1] == 12:
             sig = sig.T
         elif sig.ndim == 2 and sig.shape[0] > 12 and sig.shape[1] > 12:
-            print(f"Warning: unexpected signal shape {tuple(sig.shape)}, extracting first 12 rows")
             sig = sig[:12, :]
         elif sig.ndim != 2:
             raise ValueError(f"Expected 2D signal, got {sig.ndim}D")
@@ -343,8 +344,7 @@ def main(args):
         elif L > 5000:
             sig = sig[:, :5000]
 
-        if len(examples) < args.examples:
-            examples.append({'sig': sig, 'rid': rid_ex, 'true': int(true_lbl)})
+        examples.append({'sig': sig, 'rid': rid_ex, 'true': int(true_lbl)})
 
         ids.append(rid_ex)
         ys.append(int(true_lbl))
@@ -353,8 +353,12 @@ def main(args):
     ys = np.array(ys)
     scores = np.array(scores)
 
-    # Compute threshold
     thr, _ = find_best_threshold(ys, scores)
+
+    out_dir_full = os.path.join(args.plot_dir, 'full_lead')
+    out_dir_windows = os.path.join(args.plot_dir, 'windows')
+    os.makedirs(out_dir_full, exist_ok=True)
+    os.makedirs(out_dir_windows, exist_ok=True)
 
     for idx_ex, ex in enumerate(examples, start=1):
         sig_ex  = ex['sig']
@@ -418,10 +422,8 @@ def main(args):
         idx_global = ids.index(rid_ex)
         pred_lbl = int(scores[idx_global] > thr)
 
-        # Plot full multilead reconstruction
         def plot_full_multilead_with_bpm(*args, **kwargs):
             orig_suptitle = plt.suptitle
-            # Append BPM (información de frecuencia cardíaca)
             def new_suptitle(*a, **k):
                 return orig_suptitle(
                     f'Epoch {idx_ex}: true={true_lbl}, pred={pred_lbl}, BPM={bpm_mean:.1f}',
@@ -430,24 +432,23 @@ def main(args):
                 )
             plt.suptitle = new_suptitle
             try:
-                out = plot_full_multilead(*args, **kwargs)
+                out_path = plot_full_multilead(*args, **kwargs)
             finally:
                 plt.suptitle = orig_suptitle
-            return out
+            return out_path
 
         plot_full_multilead_with_bpm(
             x_orig_full,
             x_mean_full,
             x_std_full,
             epoch=idx_ex,
-            out_dir_det=args.full_plot_dir,
-            out_dir_var=args.full_plot_dir,
+            out_dir_det=out_dir_full,
+            out_dir_var=args.plot_dir,
             attn_full=attn_full,
             anomaly_full=anomaly_full,
             true_lbl=true_lbl,
             pred_lbl=pred_lbl
         )
-
         total_len = x_orig_full.shape[0]
         n_windows = (total_len - WINDOW) // STRIDE + 1
         window_sums = []
@@ -468,8 +469,8 @@ def main(args):
         plot_full_multilead_with_bpm(
             x_orig_win, x_mean_win, x_std_win,
             epoch=idx_ex,
-            out_dir_det=args.window_plot_dir,
-            out_dir_var=args.window_plot_dir,
+            out_dir_det=out_dir_windows,
+            out_dir_var=args.plot_dir,
             attn_full=saliency_win,
             anomaly_full=anomaly_win,
             true_lbl=true_lbl,
@@ -490,14 +491,16 @@ if __name__=='__main__':
                 help='Path to processed_reference.csv for CPSC evaluation')
     p.add_argument('--cpsc_dir', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_cpsc'),
                 help='Directory containing processed_cpsc .npy files')
-    p.add_argument('--cpsc_max_samples', type=int, default=100,
+    p.add_argument('--cpsc_max_samples', type=int, default=10,
                 help='Maximum number of CPSC samples to use')
 
     # Number of example signals to plot
-    p.add_argument('--examples', type=int, default=100,
+    p.add_argument('--examples', type=int, default=10,
                 help='Number of example signals to plot')
 
     # Directory to save plots
     p.add_argument('--plot_dir', type=str, default=BASE_PLOT_DIR_VAE,
                 help='Directory to save visualization plots')
 
+    args = p.parse_args()
+    main(args)

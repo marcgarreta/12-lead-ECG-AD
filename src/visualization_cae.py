@@ -11,8 +11,6 @@ WEIGHTS_DIR = SRC_DIR / "weights"
 DATA_DIR    = ROOT_DIR / "data" / "inference_data"
 CPSC_DIR    = DATA_DIR / "cpsc" / "processed_cpsc"
 CPSC_CSV    = DATA_DIR / "cpsc" / "processed_reference.csv"
-MIMIC_DIR   = DATA_DIR / "mimic_npy_abnormal"
-PTBXL_DIR   = DATA_DIR / "ptbxl_zscore_200"
 IMG_DIR     = ROOT_DIR / "img"
 PLOTS_CAE_DIR = IMG_DIR / "plots_cae"
 import os, math, json, argparse, numpy as np, pandas as pd, torch
@@ -25,11 +23,10 @@ import torch
 
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter1d
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-from models.cae import CAE_M
+from models.cae import CAE
 
 BETA   = 0.3                   
 ALPHA  = 0.7          
@@ -147,16 +144,7 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
     else:
         anomaly_min = anomaly_max = None
 
-    # Include original signal and reconstruction ±2σ
-    sig_min = float(np.nanmin(x_orig_full))
-    sig_max = float(np.nanmax(x_orig_full))
-    if not np.isfinite(sig_min) or not np.isfinite(sig_max):
-        sig_min, sig_max = 0.0, 0.0
-    # Usar 2*std para el rango de la señal
-    rec_min = float((x_mean_full - 2*x_std_full).min())
-    rec_max = float((x_mean_full + 2*x_std_full).max())
-    sig_min = min(sig_min, rec_min)
-    sig_max = max(sig_max, rec_max)
+    # Remove global y-limits, use per-lead percentile-based scaling below
     fig = plt.figure(figsize=(14, 2.5 * n_leads), constrained_layout=True)
     gs = gridspec.GridSpec(n_leads * 4, 1,
                            height_ratios=[5,5,1,1] * n_leads,
@@ -184,8 +172,16 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
                          x_mean_full[:, i] - 2*x_std_full[:, i],
                          x_mean_full[:, i] + 2*x_std_full[:, i],
                          color='C1', alpha=0.3)
-        # Set common y-limits for all leads
-        ax0.set_ylim(sig_min, sig_max)
+        # Set per-lead y-limits based on 1st and 99th percentiles
+        orig_p1 = np.nanpercentile(x_orig_full[:, i], 1)
+        orig_p99 = np.nanpercentile(x_orig_full[:, i], 99)
+        rec_p1 = np.nanpercentile(x_mean_full[:, i], 1)
+        rec_p99 = np.nanpercentile(x_mean_full[:, i], 99)
+        ymin = min(orig_p1, rec_p1)
+        ymax = max(orig_p99, rec_p99)
+        if not np.isfinite(ymin) or not np.isfinite(ymax) or abs(ymax - ymin) < 1e-6:
+            ymin, ymax = -1, 1
+        ax0.set_ylim(ymin, ymax)
         ax0.set_ylabel(f'Lead {i+1}')
         if i == 0:
             ax0.legend(['Original','Recon'], loc='upper right', fontsize='small')
@@ -270,21 +266,14 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
 
 @torch.no_grad()
 def main(args):
-    PLOTS_CAE_DIR.mkdir(parents=True, exist_ok=True)
-    # Define subdirectories for full and window-based plots
-    FULL_DIR = PLOTS_CAE_DIR / "full"
-    WINDOW_DIR = PLOTS_CAE_DIR / "windows"
-    FULL_DIR.mkdir(parents=True, exist_ok=True)
-    WINDOW_DIR.mkdir(parents=True, exist_ok=True)
-    import glob, os, pandas as pd, random
+    # Create output directories inside args.plot_dir
+    out_dir_full = os.path.join(args.plot_dir, 'full_lead')
+    out_dir_windows = os.path.join(args.plot_dir, 'windows')
+    os.makedirs(out_dir_full, exist_ok=True)
+    os.makedirs(out_dir_windows, exist_ok=True)
+    import glob, pandas as pd, random
     samples = None
-    if args.mimic_dir:
-        files = glob.glob(os.path.join(args.mimic_dir, '*.npy'))
-        samples = [(f, 1, os.path.basename(f).replace('.npy','')) for f in files]
-        # Subsample if mimic_max_samples is set
-        if args.mimic_max_samples is not None:
-            samples = random.sample(samples, min(args.mimic_max_samples, len(samples)))
-    elif args.cpsc_dir and args.cpsc_csv:
+    if args.cpsc_dir and args.cpsc_csv:
         cpsc_df = pd.read_csv(args.cpsc_csv)
         cpsc_df['path'] = cpsc_df['Recording'].astype(str).apply(
             lambda r: os.path.join(args.cpsc_dir, f"{r}.npy"))
@@ -293,23 +282,16 @@ def main(args):
                    for _, row in cpsc_df.iterrows()]
         if args.cpsc_max_samples is not None:
             samples = random.sample(samples, min(args.cpsc_max_samples, len(samples)))
-    elif args.ptbxl_data and args.ptbxl_csv:
-        ptbxl_df = pd.read_csv(args.ptbxl_csv)
-        ptbxl_df['path'] = ptbxl_df['Recording'].astype(str).apply(
-            lambda r: os.path.join(args.ptbxl_data, f"{r}.npy"))
-        ptbxl_df = ptbxl_df[ptbxl_df.path.map(os.path.exists)]
-        samples = [(row['path'],
-                    int(row['label']) if 'label' in ptbxl_df.columns else 0,
-                    row['Recording'])
-                   for _, row in ptbxl_df.iterrows()]
-        if args.ptbxl_max_samples is not None:
-            samples = random.sample(samples, min(args.ptbxl_max_samples, len(samples)))
     else:
         raise ValueError("Por favor especifique un directorio de visualización y su CSV")
 
+    print(f"[DEBUG] Found {len(samples)} valid samples.")
+    if len(samples) == 0:
+        raise ValueError("No valid samples found. Check your dataset paths and CSV files.")
+
     # 1. modelo
     ckpt_data = torch.load(args.ckpt, map_location=DEVICE, weights_only=True)
-    model = CAE_M(in_channels=12).to(DEVICE)
+    model = CAE(in_channels=12).to(DEVICE)
     model.load_state_dict(ckpt_data if isinstance(ckpt_data, dict) else ckpt_data.state_dict())
 
     model.eval()
@@ -343,6 +325,10 @@ def main(args):
 
     ys = np.array(ys)
     scores = np.array(scores)
+
+    print(f"[DEBUG] Number of scores computed: {len(scores)}")
+    if len(scores) == 0:
+        raise ValueError("No anomaly scores computed. Possible data processing issue.")
 
     # Compute threshold
     thr, _ = find_best_threshold(ys, scores)
@@ -433,8 +419,8 @@ def main(args):
             x_mean_full,
             x_std_full,
             epoch=idx_ex,
-            out_dir_det=str(FULL_DIR),
-            out_dir_var=str(FULL_DIR),
+            out_dir_det=out_dir_full,
+            out_dir_var=out_dir_full,
             saliency_full=saliency_full,
             anomaly_full=anomaly_full,
             true_lbl=true_lbl,
@@ -479,7 +465,7 @@ def main(args):
                        extent=[t_win[0], t_win[-1], 0, 1])
             ax2.axis('off')
         fig_w.suptitle(f'Window {best_idx} MAE-max (Epoch {idx_ex})', fontsize=14)
-        out_win = WINDOW_DIR / f'epoch_{idx_ex:03d}_window_{best_idx}.png'
+        out_win = os.path.join(out_dir_windows, f'epoch_{idx_ex:03d}_window_{best_idx}.png')
         fig_w.savefig(out_win, dpi=150)
         plt.close(fig_w)
         print(f'➜ Guardado ventana {best_idx} en {out_win}')
@@ -503,7 +489,7 @@ def main(args):
         ax.set_yticklabels([f'Lead {i+1}' for i in range(n_leads)])
         cbar = fig.colorbar(im, ax=ax, label='MAE')
         ax.set_title(f'Per-window MAE (Epoch {idx_ex})')
-        out_path = WINDOW_DIR / f'epoch_{idx_ex:03d}_windows.png'
+        out_path = os.path.join(out_dir_windows, f'epoch_{idx_ex:03d}_windows.png')
         fig.tight_layout()
         plt.savefig(out_path, dpi=150)
         plt.close(fig)
@@ -524,12 +510,8 @@ if __name__=='__main__':
     )
 
     # MAX SAMPLES
-    p.add_argument('--ptbxl_max_samples', type=int, default=10,
-                   help='Máximo de muestras a usar de PTB-XL (antes de mezclar)')
     p.add_argument('--cpsc_max_samples', type=int, default=10,
                    help='Máximo de muestras a usar de CPSC (antes de mezclar)')
-    p.add_argument('--mimic_max_samples', type=int, default=10,
-                   help='Máximo de muestras a usar de MIMIC (antes de mezclar)')
 
     # Number of example signals to plot
     p.add_argument('--examples', type=int, default=10,
@@ -540,16 +522,6 @@ if __name__=='__main__':
                    help='Path to processed_reference.csv for CPSC evaluation')
     p.add_argument('--cpsc_dir', type=str, default=str(CPSC_DIR),
                    help='Directory containing processed_cpsc .npy files')
-
-    # PTB-XL dataset paths
-    p.add_argument('--ptbxl_data', type=str, default=str(PTBXL_DIR),
-                   help='Directory containing PTB-XL .npy files')
-    p.add_argument('--ptbxl_csv', type=str, default=str(PTBXL_DIR / "labels.csv"),
-                   help='CSV file for PTB-XL dataset')
-
-    # MIMIC dataset paths
-    p.add_argument('--mimic_dir', type=str, default=str(MIMIC_DIR),
-                   help='Directory containing MIMIC abnormal .npy files (all label=1)')
 
     # Directory to save plots
     p.add_argument('--plot_dir', type=str,
