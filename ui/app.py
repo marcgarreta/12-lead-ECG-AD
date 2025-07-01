@@ -20,15 +20,15 @@ from scipy.signal import find_peaks
 
 # To access the src path
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 SRC_DIR = ROOT / 'src'
+sys.path.insert(0, str(SRC_DIR))
 MODELS_DIR = SRC_DIR / 'models'
 DATA_DIR = ROOT / 'data'
 IMG_DIR  = ROOT / 'img'
 
 # To access the models and the visualization tools 
-from src.models.vae_bilstm_attention import VAE #VAE-BiLSTM-MHA
-from src.visualization_vae import reconstruct_full_mean_std, ALPHA, ATTN_STRIDE, ATTN_WINDOW
+from models.vae_bilstm_attention import VAE #VAE-BiLSTM-MHA
+from visualization_vae import reconstruct_full_mean_std, ALPHA, ATTN_STRIDE, ATTN_WINDOW
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -49,7 +49,7 @@ else:
 vae_model.eval()
 
 # Load CAE model
-from src.models.cae import CAE
+from models.cae import CAE
 cae_ckpt_data = torch.load(str(CAE_CKPT_PATH), map_location=DEVICE)
 cae_model = CAE().to(DEVICE)
 cae_model.load_state_dict(cae_ckpt_data)
@@ -373,5 +373,5 @@ def analyze_ecg(n_clicks, threshold, contents, filename, lead_idx, model_select)
     return [status_div, graph]
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=9000)
+    app.run(debug=True, host='0.0.0.0', port=8090)
 
