@@ -1,8 +1,10 @@
 # 12-Lead ECG Anomaly Detection
 
+This repository provides all the necessary material, including the final report and its progress reports, as well as code for model training, evaluation, visualization, and dashboard usage.
+
 ## About
 
-This project focuses on the **unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs)** autoencoder-based architectures. It explores and compares three models:
+The project focuses on the **unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs)** autoencoder-based architectures. It explores and compares three models:
 
 - **Convolutional Autoencoder (CAE)**  
 - **Variational Autoencoder (VAE)**  
@@ -106,6 +108,9 @@ python pre-process.py --dataset ptbxl --input-dir {path_of_ptb-xl-a-large-public
 # training
 cd src
 python training.py --dataset [ptbxl or mimic or both]
+
+# evaluation
+python evaluation_metrics.py
 
 # visualization (to visualize defined samples from the test set)
 python visualization_cae.py #if you want to plot the cae visualizations
