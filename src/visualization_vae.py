@@ -302,12 +302,7 @@ def plot_full_multilead(x_orig_full, x_mean_full, x_std_full, epoch,
 def main(args):
     import glob, os, pandas as pd, random
     samples = None
-    if args.mimic_dir:
-        files = glob.glob(os.path.join(args.mimic_dir, '*.npy'))
-        samples = [(f, 1, os.path.basename(f).replace('.npy','')) for f in files]
-        if args.mimic_max_samples is not None:
-            samples = random.sample(samples, min(args.mimic_max_samples, len(samples)))
-    elif args.cpsc_dir and args.cpsc_csv:
+    if args.cpsc_dir and args.cpsc_csv:
         cpsc_df = pd.read_csv(args.cpsc_csv)
         cpsc_df['path'] = cpsc_df['Recording'].astype(str).apply(
             lambda r: os.path.join(args.cpsc_dir, f"{r}.npy"))
@@ -488,45 +483,21 @@ if __name__=='__main__':
 
     # MODEL PARAMETERS
     p.add_argument('--ckpt', default=str(PROJECT_ROOT / 'src' / 'weights' / 'best_vae_attn_model.pt'),
-                   help='Path to model checkpoint')
-
-    # MAX SAMPLES 
-    p.add_argument('--ptbxl_max_samples', type=int, default=100,
-                   help='Máximo de muestras a usar de PTB-XL (antes de mezclar)')
-    p.add_argument('--cpsc_max_samples',  type=int, default=100,
-                   help='Máximo de muestras a usar de CPSC (antes de mezclar)')
-    p.add_argument('--mimic_max_samples', type=int, default=100,
-                   help='Máximo de muestras a usar de MIMIC (antes de mezclar)')
-
-    # Number of example signals to plot
-    p.add_argument('--examples', type=int, default=100,
-                   help='Número de señales a graficar como ejemplo')
+                help='Path to model checkpoint')
 
     # CPSC dataset paths
     p.add_argument('--cpsc_csv', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_reference.csv'),
-                   help='Path to processed_reference.csv for CPSC evaluation')
+                help='Path to processed_reference.csv for CPSC evaluation')
     p.add_argument('--cpsc_dir', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'cpsc' / 'processed_cpsc'),
-                   help='Directory containing processed_cpsc .npy files')
+                help='Directory containing processed_cpsc .npy files')
+    p.add_argument('--cpsc_max_samples', type=int, default=100,
+                help='Maximum number of CPSC samples to use')
 
-    # PTB-XL dataset paths (unused)
-    p.add_argument('--ptbxl_data', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'ptbxl_zscore_200'),
-                   help='Directory containing PTB-XL .npy files')
-    p.add_argument('--ptbxl_csv', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'ptbxl_zscore_200' / 'labels.csv'),
-                   help='CSV file for PTB-XL dataset')
-
-    # MIMIC dataset paths
-    p.add_argument('--mimic_dir', type=str, default=str(PROJECT_ROOT / 'data' / 'inference_data' / 'mimic_npy_abnormal'),
-                   help='Directory containing MIMIC abnormal .npy files (all label=1)')
+    # Number of example signals to plot
+    p.add_argument('--examples', type=int, default=100,
+                help='Number of example signals to plot')
 
     # Directory to save plots
     p.add_argument('--plot_dir', type=str, default=BASE_PLOT_DIR_VAE,
-                     help='Directory to save visualization plots')
-    
-    args = p.parse_args()
-    # prepare separate folders for full and window-based plots
-    args.full_plot_dir   = os.path.join(args.plot_dir, 'full')
-    args.window_plot_dir = os.path.join(args.plot_dir, 'windows')
-    os.makedirs(args.full_plot_dir, exist_ok=True)
-    os.makedirs(args.window_plot_dir, exist_ok=True)
-    main(args)
+                help='Directory to save visualization plots')
 
