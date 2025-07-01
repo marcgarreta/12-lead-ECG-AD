@@ -126,6 +126,12 @@ python app.py
 
 ---
 
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+---
+
 ## References
 
 1. T. Zhang, Y. Zhang, B. Zhang, H. Zhou, Q. Xu, Y. Zhang, and C. Xu, *Unsupervised Deep Anomaly Detection for Multi-Sensor Time-Series Signals*, arXiv preprint arXiv:2107.12626, 2021. [Online]. Available: [https://arxiv.org/abs/2107.12626](https://arxiv.org/abs/2107.12626)
