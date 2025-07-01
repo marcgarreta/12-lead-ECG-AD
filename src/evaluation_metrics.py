@@ -201,7 +201,7 @@ if __name__=='__main__':
     p.add_argument('--cpsc_dir', type=str,
                    default=str(CPSC_DIR_DEFAULT),
                    help='Directory containing processed_cpsc .npy files')
-    p.add_argument('--cpsc_max_samples', type=int, default=None,
+    p.add_argument('--cpsc_max_samples', type=int, default=20,
                    help='Maximum number of CPSC samples to evaluate (for quick tests)')
 
     args = p.parse_args()
