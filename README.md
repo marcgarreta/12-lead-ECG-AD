@@ -7,8 +7,8 @@ This repository provides all the necessary material, including the final report 
 The project focuses on the **unsupervised detection of anomalies in 12-lead electrocardiograms (ECGs)** autoencoder-based architectures. It explores and compares three models:
 
 - **Convolutional Autoencoder (CAE)**  
-- **Variational Autoencoder (VAE)**  
-- **Variational Autoencoder with Multi-Head Attention (VAE-MHA)**  
+- **Variational Autoencoder Bidirectional Long Short-Term Memory(VAE-BiLSTM)**  
+- **Variational Autoencoder Bidirectional Long Short-Term Memory with Multi-Head Attention (VAE-BiLSTM-MHA)**  
 
 In addition to modeling, the project also includes an interactive **dashboard** designed for **interpretable visualization** of the results. This web application allows users to analyze ECG signals and interpret possible anomalous patterns within a user-friendly environment.
 
